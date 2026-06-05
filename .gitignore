@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.pyc
+memory_demo.json
+tmp_*.json

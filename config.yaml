@@ -1,0 +1,37 @@
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1/chat/completions
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 1024
+    timeout_seconds: 30
+    system_prompt: You are a warm, careful WeChat emotional chat assistant.
+
+  deepseek:
+    api_key_env: DEEPSEEK_API_KEY
+    base_url: https://api.deepseek.com/chat/completions
+    model: deepseek-v4-flash
+    temperature: 0.7
+    max_tokens: 1024
+    timeout_seconds: 30
+    system_prompt: You are a warm, careful WeChat emotional chat assistant.
+
+  claude:
+    api_key_env: CLAUDE_API_KEY
+    base_url: https://api.anthropic.com/v1/messages
+    model: claude-3-5-haiku-latest
+    temperature: 0.7
+    max_tokens: 1024
+    timeout_seconds: 30
+    system_prompt: You are a warm, careful WeChat emotional chat assistant.
+    anthropic_version: 2023-06-01
+
+  gemini:
+    api_key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    model: gemini-3.5-flash
+    temperature: 0.7
+    max_tokens: 1024
+    timeout_seconds: 30
+    system_prompt: You are a warm, careful WeChat emotional chat assistant.

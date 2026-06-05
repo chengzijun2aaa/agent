@@ -1,4 +1,4 @@
-"""Strategy planning for stage-aware emotional replies."""
+"""Advanced strategy planning based on continuous behavior profiling and neutral tactics."""
 
 from __future__ import annotations
 
@@ -8,14 +8,37 @@ if __package__ in {None, ""}:
 from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict, Field
 
-from emotion_agent.analyzers.conversation_analyzer import ConversationAnalysis
-# 假设 RiskReport 包含风险等级和安全指令
-class RiskReport(BaseModel):
+# ============================================================
+# 📊 1. 数据模型与画像系统 (Behavior Profile)
+# ============================================================
+
+class ConversationAnalysis(BaseModel):
+    """Upstream conversation analysis output."""
+    intent: str
+    emotion: str
+    interest_score: int
+    relationship_stage: str
     risk_level: str = "low"
-    safety_instruction: str = "保持克制，不要过度卷入情绪"
+    user_raw_text: str = ""
+
+class RiskReport(BaseModel):
+    """Risk multi-dimensional evaluation."""
+    support: int = 0      # 需要情感支持/倾听的迫切度 (0-100)
+    conflict: int = 0     # 当前对话的冲突/火药味指数 (0-100)
+    boundary: int = 0     # 对方试探边界/越界的程度 (0-100)
+    crisis: int = 0       # 核心安全/关系危机指数 (0-100)
+    risk_level: str = "low"
+
+class BehaviorProfile(BaseModel):
+    """Continuous behavioral snapshot of the user (0-100)."""
+    warmth: int = Field(default=50, description="热情度：言语间的温度与亲和力")
+    responsiveness: int = Field(default=50, description="响应度：回复速度、字数及接话意愿")
+    playfulness: int = Field(default=50, description="接梗度：对幽默、调侃和开玩笑的接受度")
+    guardedness: int = Field(default=50, description="防备心：对隐私、过快推进关系的抵触感")
+    emotional_need: int = Field(default=50, description="情绪需求：当前对倾诉、安慰或认同的渴望度")
 
 class ReplyPlan(BaseModel):
-    """Concrete plan used by the reply generator."""
+    """Concrete plan used by the reply generator (Maintains full compatibility)."""
     model_config = ConfigDict(extra="ignore")
 
     objective: str
@@ -23,125 +46,220 @@ class ReplyPlan(BaseModel):
     tactics: list[str] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
     target_length: str = "short"
-    candidate_count: int = 6  # 对齐生成层的6条候选
+    candidate_count: int = 6
+
+
+# ============================================================
+# 🧠 2. 画像分析器 (Behavior Profiler)
+# ============================================================
+
+class BehaviorProfiler:
+    """Generates a continuous 0-100 behavior profile from upstream analysis."""
+    
+    @staticmethod
+    def profile(analysis: ConversationAnalysis, relationship_state: Mapping[str, Any]) -> BehaviorProfile:
+        """Calculate continuous behavioral values instead of rigid classifications."""
+        score = analysis.interest_score
+        intent = analysis.intent
+        
+        # 初始默认中性值
+        warmth = 50
+        responsiveness = 50
+        playfulness = 50
+        guardedness = 50
+        emotional_need = 50
+
+        # 根据上游分析和兴趣分映射连续值
+        if score > 70:
+            warmth = min(90, 40 + (score // 2))
+            responsiveness = min(95, 45 + (score // 2))
+        elif score < 40:
+            warmth = max(15, score - 10)
+            responsiveness = max(20, score)
+            guardedness = min(90, 100 - score)
+
+        # 根据意图进行微调
+        if intent in {"冷淡", "敷衍"}:
+            responsiveness = max(10, responsiveness - 30)
+            playfulness = max(10, playfulness - 30)
+            guardedness = min(95, guardedness + 25)
+        elif intent == "测试":
+            guardedness = min(95, guardedness + 35)
+            playfulness = min(80, playfulness + 10)  # 废测通常带点好玩性质
+        elif intent in {"抱怨", "求安慰"}:
+            emotional_need = min(95, emotional_need + 40)
+            playfulness = max(15, playfulness - 25)  # 难过时不适合接梗
+        elif intent in {"分享生活", "邀约"}:
+            playfulness = min(85, playfulness + 15)
+
+        return BehaviorProfile(
+            warmth=warmth,
+            responsiveness=responsiveness,
+            playfulness=playfulness,
+            guardedness=guardedness,
+            emotional_need=emotional_need
+        )
+
+
+# ============================================================
+# 🎯 3. 策略规划器 (Strategy Planner)
+# ============================================================
 
 class StrategyPlanner:
-    """Plans response strategy from analysis, relationship state, memory, and risk."""
+    """Plans responses using neutral, high-EQ tactics based oncontinuous user profiles."""
 
     def plan(
         self,
-        analysis: ConversationAnalysis,
+        analysis: Any,
+        profile: Any,
+        risk: Any,
         relationship_state: Mapping[str, Any],
-        memory: Mapping[str, Any],
-        risk: RiskReport,
+        conversation_turn_count: int = 5,
     ) -> ReplyPlan:
-        """Create a reply plan for downstream generation."""
+        """Create a balanced reply plan using continuous variables and neutral tactics."""
         
-        # 1. 提取核心信号
-        stage = str(analysis.relationship_stage or relationship_state.get("stage", "L1"))
-        intent = analysis.intent
-        score = analysis.interest_score
+        # 1. 🛡️ 全量防御层：动态兼容 dict 和 Pydantic 对象
+        analysis_obj = ConversationAnalysis(**analysis) if isinstance(analysis, dict) else analysis
+        profile_obj = BehaviorProfile(**profile) if isinstance(profile, dict) else profile
+        risk_obj = RiskReport(**risk) if isinstance(risk, dict) else risk
+
+        # 2. 🚨 【核心修复】把 user_text 的定义直接提取到最顶端，防止 free variable 报错
+        user_text = getattr(analysis_obj, "user_raw_text", "") or ""
+        intent = getattr(analysis_obj, "intent", "") or ""
+        stage = str(analysis_obj.relationship_stage or relationship_state.get("stage", "L1"))
         
-        # 初始化基础配置
-        tactics = [f"当前阶段：{stage}", f"意图倾向：{intent}"]
-        avoid = ["自嗨式回复", "逻辑说教", "查户口", "反问施压", "长篇大论"]
+        # 初始化基础结构
+        tactics = [f"关系阶段：{stage}"]
+        avoid = ["长篇大论的说教", "过度解读对方的话", "刻意的套路和打压话术"]
+
+        # 3. 🛡️ 自尊防御熔断器（现在 user_text 已经 association 完毕，绝对不会再报错）
+        insult_keywords = ["傻卵", "傻x", "有病", "滚", "乐色", "死", "傻逼"]
+        has_insult = any(word in user_text.lower() for word in insult_keywords)
+
+        if has_insult or risk_obj.conflict > 70 or risk_obj.boundary > 70:
+            return ReplyPlan(
+                objective="对方言语出现越界或侮辱，我方必须展示高价值男性的核心尊严，立规矩，客观降温，绝不迎合讨好。",
+                tone="冷淡、克制、有强烈的边界感",
+                tactics=[
+                    "执行【边界感】策略：用极其冷静、简短、甚至带有一丝警告意味的客观话术回应",
+                    "拒绝提供任何情绪价值，不接对方的辱骂梗，不顺从，把聊天热度瞬间降到冰点"
+                ],
+                avoid=[
+                    *avoid, "顺着对方的话自嘲（如承认自己是傻卵）", "卑微讨好", 
+                    "解释自己为什么让她不开心", "发任何带有笑脸或狗头、哈哈的表情包"
+                ],
+                candidate_count=3
+            )
+
+        # 默认中性设定
+        objective = "保持舒适、自然的同频沟通。"
+        tone = "轻松、自然"
 
         # ============================================================
-        # 🚨 【拦截网 A：生成策略前强行过滤记忆源头】
+        # 4. 风险多维拆分处理层 (往下维持你原有的路由逻辑即可...)
         # ============================================================
-        memory_info = self._memory_hint(memory)
-        # 如果不是主动聊宠物，或者上游记忆里有猫，直接污染源切断，不注入 tactics
-        if memory_info != "暂无" and "猫" not in memory_info and intent in {"分享生活", "闲聊", "寻找话题"}:
-            tactics.append(f"背景参考：对方{memory_info}")
+        # 1. 危机处理 (Crisis) -> 最高优先级响应
+        if risk_obj.crisis > 70 or analysis_obj.risk_level == "high":
+            return ReplyPlan(
+                objective="保持情绪高度抽离，提供安全的边界感，给予理智而客观的缓冲。",
+                tone="理性、克制、边界感明确",
+                tactics=["使用情绪阻断技术，明确表示理性克制", "给出客观的缓冲地带，不盲目卷入纠纷"],
+                avoid=[*avoid, "盲目站队", "过于亲密的安抚"],
+                candidate_count=3
+            )
+        
+        # ... 后续逻辑保持不变 ...
+        # ============================================================
+        # 🛡️ 风险多维拆分处理层
+        # ============================================================
+        
+        # 1. 危机处理 (Crisis) -> 最高优先级响应
+        if risk_obj.crisis > 70 or analysis_obj.risk_level == "high":
+            return ReplyPlan(
+                objective="保持情绪高度抽离，提供安全的边界感，给予理智而客观的缓冲。",
+                tone="理性、克制、边界感明确",
+                tactics=["使用情绪阻断技术，明确表示理性克制", "给出客观的缓冲地带，不盲目卷入纠纷"],
+                avoid=[*avoid, "盲目站队", "过于亲密的安抚"],
+                candidate_count=3
+            )
+            
+        # 2. 冲突缓冲 (Conflict)
+        elif risk_obj.conflict > 50:
+            return ReplyPlan(
+                objective="不承接对立情绪，通过平和、客观的态度中和当前的紧绷感。",
+                tone="情绪稳定、大度、温和",
+                tactics=["承接对立情绪，用不带攻击性的中性语言回应", "淡化冲突焦点，将话题带回理性沟通范围"],
+                avoid=[*avoid, "自证清白", "反向指责", "阴阳怪气"],
+                candidate_count=4
+            )
 
-        # 2. 处理高风险场景
-        if analysis.risk_level != "low" or risk.risk_level != "low":
-            objective = "优先接住负面情绪，不评判，不建议，只提供安全陪伴。"
-            tone = "温和、可靠、低压"
-            tactics.append("使用情绪共振技术")
-            avoid.extend(["暧昧推进", "开玩笑"])
-            current_candidate_count = 6  # 👈 哪怕高风险也强制要 6 条，不给它变 3 条的机会
+        # 3. 边界防御 (Boundary)
+        elif risk_obj.boundary > 60:
+            objective = "明确个人边界，不卑不亢，用轻松但坚定的话术表明立场。"
+            tone = "坦诚、清爽、有原则"
+            tactics.append("执行【边界感】策略：用坦诚直接的语言标明底线，拒绝越界")
+            avoid.extend(["无底线退让", "讨好式顺从"])
+
+        # 4. 情感支持 (Support)
+        elif risk_obj.support > 60 or profile_obj.emotional_need > 75:
+            objective = "提供高质量的倾听空间，通过共情提供安全感。"
+            tone = "温柔、真诚、有支撑感"
+            tactics.append("执行【支持/共情】策略：顺应对方的负面情绪，通过倾听和认同提供包容空间")
+            avoid.extend(["开玩笑调侃", "理性分析讲道理", "转移话题"])
+
+        # ============================================================
+        # 📊 核心多维画像动态调配层
+        # ============================================================
         else:
-            # 3. 核心决策矩阵：根据意图匹配战术
-            current_candidate_count = 6
-            if intent in {"工作压力", "抱怨", "求安慰"}:
-                objective = "情绪承接 + 战友感。"
-                tone = "松弛、有温度、站她这边"
-                tactics.append("吐槽那个让她烦的人/事，而不是教她怎么做")
-            elif intent in {"分享生活", "调侃", "分享情绪"}:
-                if score >= 70:
-                    objective = "同频放大，适当拉扯，增加暧昧浓度。"
-                    tone = "俏皮、自信、带点攻击性(互损)"
-                    tactics.append("捕捉对方话里的槽点进行反击")
-                else:
-                    objective = "正向反馈，鼓励对方继续表达。"
-                    tone = "好奇、捧哏、轻松"
-                    tactics.append("针对她分享的细节提一个好玩的开放式问题")
-            elif intent == "测试":
-                objective = "不自证，幽默破局，拿回框架。"
-                tone = "高价值、半真半假、不卑不亢"
-                tactics.append("用幽默反弹对方的试探")
-            elif intent == "邀约":
-                objective = "爽快答应，并明确下一步动作。"
-                tone = "大方、有期待感、行动导向"
-            elif intent == "冷淡" or score < 40:
-                objective = "礼貌离场，不纠缠，保持姿态。"
-                tone = "平静、高冷、不卑不亢"
-                tactics.append("提供撤退信号，结束本次对话")
+            # A. 处理高防备心 / 低热情 (Guardedness / Low Warmth) -> 慢热冷淡
+            if profile_obj.guardedness > 70 or profile_obj.warmth < 40:
+                objective = "降低聊天压迫感，给对方留出舒适的社交距离。"
+                tone = "松弛、淡定、恰到好处的社交距离"
+                tactics.append("执行【轻松】策略：以分享日常或轻松客观的事物开场，不带任何目的性")
+                avoid.extend(["高频发问", "过度热情的迎合"])
+                
+                # 如果同时响应度也极低，果断选择合适时机结束
+                if profile_obj.responsiveness < 30:
+                    objective = "得体、自然地收尾，不消耗无谓的社交精力。"
+                    tactics.append("执行【结束话题】策略：用礼貌、无压力的结束语利落收尾，留白")
+
+            # B. 处理高接梗度 / 高热情 (High Playfulness / High Warmth) -> 氛围良好
+            elif profile_obj.playfulness > 60 and profile_obj.warmth >= 50:
+                objective = "放大互动中的趣味性，拉近彼此的心理距离。"
+                tone = "风趣、活泼、富有张力"
+                tactics.append("执行【调侃】策略：抓住对方话语中有趣的切入点进行幽默延伸，可以带有轻微的恶作剧意味")
+                
+                # 如果关系到了中后期，顺势推进
+                if stage in {"L3", "L4", "L5"}:
+                    tactics.append("执行【推进关系】策略：在轻松气氛中植入共享语境或未来的模糊交集")
+            
+            # C. 常规中性互动
             else:
-                objective = "保持连接，发现新话题。"
-                tone = "随性、朋友感、无压力"
-
-        # 4. 根据阶段修正
-        if stage in {"L1", "L2"}:
-            avoid.extend(["越位关心", "过度暧昧"])
+                objective = "进行对等、舒适的情绪流动。"
+                tone = "随性、朋友间的熟稔"
+                tactics.append("执行【轻松】策略：保持同频的字数和节奏进行自然回应")
 
         # ============================================================
-        # 🔥【拦截网 B：兜底物理防猫墙，天王老子来了也得过滤】
+        # ⏱️ 长线对话控制机制 (Turn Controller)
         # ============================================================
-        # 无论走哪个分支，最后在这里统一清洗
+        if conversation_turn_count >= 8 and profile_obj.emotional_need < 60:
+            objective = "在交谈情绪饱满的时候优雅离场，不过度消耗话题舒适度。"
+            tactics.append("执行【结束话题】策略：主动以‘去处理事情/去运动’等正面理由大方离场")
+            avoid.extend(["恋战式硬找话题", "询问式结尾"])
+
+        # 过滤可能通过别的方式漏进来的猫
         tactics = [t for t in tactics if "猫" not in t]
         
-        user_text = getattr(analysis, "user_raw_text", "") or ""
-        if "猫" not in user_text and intent != "宠物话题":
-            avoid.append("绝对不要主动提起‘猫’或任何宠物话题（包括猫咪今天乖不乖等询问，坚决禁止）")
-        # ============================================================
+        user_text = getattr(analysis_obj, "user_raw_text", "") or ""
+        if "猫" not in user_text and analysis_obj.intent != "宠物话题":
+            avoid.append("绝对禁止主动提起‘猫’或任何关于宠物的段子/烂梗")
+
+        avoid.append("在一句话中连续使用问号（除非用于温和的幽默反问）")
 
         return ReplyPlan(
             objective=objective,
             tone=tone,
             tactics=tactics,
             avoid=avoid,
-            candidate_count=current_candidate_count
+            candidate_count=6
         )
-
-    @staticmethod
-    def _memory_hint(memory: Mapping[str, Any]) -> str:
-        """Build a compact memory hint."""
-        city = memory.get("city")
-        pets = memory.get("pets", [])
-        if city: 
-            return f"在{city}"
-        if pets: 
-            first_pet = pets[0]
-            breed = first_pet.get("breed") if isinstance(first_pet, dict) else first_pet
-            return f"养了一只{breed or '宠物'}"
-        return "暂无"
-def _demo() -> None:
-    """Run a small module smoke test."""
-    planner = StrategyPlanner()
-    # 测试场景：对方在抱怨工作压力
-    analysis = ConversationAnalysis(
-        intent="工作压力", 
-        emotion="烦躁", 
-        interest_score=55, 
-        relationship_stage="L3", 
-        risk_level="low"
-    )
-    plan = planner.plan(analysis, {"stage": "L3"}, {}, RiskReport())
-    print(f"Objective: {plan.objective}")
-    print(f"Tactics: {plan.tactics}")
-    print(f"Avoid: {plan.avoid}")
-
-if __name__ == "__main__":
-    _demo()

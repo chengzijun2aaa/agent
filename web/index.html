@@ -5,6 +5,59 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Emotion Agent</title>
     <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* 💡 临时补一点内联样式确保你的命名管理器好看，你后面也可以移到 styles.css 里 */
+      .session-controller {
+        margin: 15px 0;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .session-controller label {
+        display: block;
+        font-size: 12px;
+        color: #888;
+        margin-bottom: 6px;
+      }
+      .session-row {
+        display: flex;
+        gap: 8px;
+      }
+      #session-select {
+        flex: 1;
+        background: #222;
+        color: #fff;
+        border: 1px solid #444;
+        padding: 6px;
+        border-radius: 4px;
+        outline: none;
+        font-size: 13px;
+      }
+      #add-session-btn {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: bold;
+        transition: background 0.2s;
+      }
+      #add-session-btn:hover {
+        background: #0056b3;
+      }
+      .memory-text {
+        white-space: pre-wrap;
+        font-size: 13px;
+        color: #ccc;
+        line-height: 1.6;
+        background: rgba(0, 0, 0, 0.2);
+        padding: 10px;
+        border-radius: 6px;
+      }
+    </style>
   </head>
   <body>
     <main class="app-shell">
@@ -17,6 +70,17 @@
           </div>
         </div>
 
+        <section class="session-controller" aria-label="会话管理">
+          <label for="session-select">当前独立战局（切换/命名）</label>
+          <div class="session-row">
+            <select id="session-select">
+              <option value="girl_xiaolin">小林 (L2 刚认识)</option>
+              <option value="girl_vivi">薇薇 (L4 暧昧期)</option>
+            </select>
+            <button id="add-session-btn" type="button" title="新建战局命名">新建</button>
+          </div>
+        </section>
+
         <section class="metric-grid" aria-label="关系指标">
           <div class="metric">
             <span>阶段</span>
@@ -26,14 +90,16 @@
             <span>风险</span>
             <strong id="risk">low</strong>
           </div>
-          <div class="metric">
-            <span>评分</span>
-            <strong id="score">-</strong>
-          </div>
+          <div class="metric"><span>热情度</span> <strong id="score">-</strong></div>
           <div class="metric">
             <span>意图</span>
             <strong id="intent">-</strong>
           </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>长期记忆档案</h2>
+          <div id="memory" class="memory-text">暂无记录</div>
         </section>
 
         <section class="panel-section">

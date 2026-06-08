@@ -59,15 +59,22 @@ class ReplyPipeline:
     def run(self, chat_history: Sequence[str | Mapping[str, Any]]) -> ReplyPipelineResult:
         """Run the full reply pipeline and return the final reply plus diagnostics."""
         analysis = self.analyzer.analyze(chat_history)
-        relationship_state_model = self.relationship_machine.update_state(chat_history)
+        self.memory_manager.update_memory(chat_history, learn_profile=False)
+        latest_user_messages = self._latest_user_messages(chat_history)
+        profile = self.memory_manager.update_profile(
+            latest_user_messages,
+            analysis=analysis.model_dump(),
+            relationship_state=self.relationship_machine.export_state(),
+        )
+        profile_summary = profile.summary()
+        relationship_state_model = self.relationship_machine.update_state(chat_history, profile=profile_summary)
         relationship_state = self.relationship_machine.export_state()
-        self.memory_manager.update_memory(chat_history)
         memory = self.memory_manager.memory.user.summary()
         risk = self.risk_detector.detect(chat_history)
         plan = self.strategy_planner.plan(analysis, relationship_state, memory, risk)
         candidates = self.reply_generator.generate(chat_history, plan, relationship_state, memory)
         humanized = self.humanizer.humanize(candidates)
-        ranked = self.reply_ranker.rank(humanized, risk, relationship_state, chat_history)
+        ranked = self.reply_ranker.rank(humanized, risk, relationship_state, chat_history, memory)
         _ = relationship_state_model
         return ReplyPipelineResult(
             final_reply=ranked.candidate.text,
@@ -79,6 +86,17 @@ class ReplyPipeline:
             candidates=humanized,
             ranked=ranked,
         )
+
+    @staticmethod
+    def _latest_user_messages(chat_history: Sequence[str | Mapping[str, Any]]) -> list[str | Mapping[str, Any]]:
+        """Return the latest message from the other person for profile learning."""
+        for item in reversed(chat_history):
+            if isinstance(item, str):
+                return [item]
+            role = str(item.get("role", "user")).lower()
+            if role not in {"assistant", "me", "boy", "我"}:
+                return [item]
+        return []
 
 
 def _demo() -> None:

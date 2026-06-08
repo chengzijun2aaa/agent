@@ -27,7 +27,7 @@ def run_cases() -> list[dict[str, Any]]:
         if memory_path.exists():
             memory_path.unlink()
         pipeline = ReplyPipeline(memory_path=memory_path)
-        result = pipeline.run(case["history"])
+        result = run_case_pipeline(pipeline, case)
         reply = result.final_reply
         forbidden_hits = [phrase for phrase in case.get("forbidden_phrases", []) if phrase in reply]
         expectation_failures: list[str] = []
@@ -47,6 +47,13 @@ def run_cases() -> list[dict[str, Any]]:
             missing = [item for item in case["expected_memory_contains"] if item not in memory_dump]
             if missing:
                 expectation_failures.append(f"memory_missing={','.join(missing)}")
+        for key, minimum in case.get("expected_profile_min", {}).items():
+            value = result.memory.get("profile", {}).get(key, 0)
+            if float(value) < float(minimum):
+                expectation_failures.append(f"profile_{key}_too_low={value}")
+        if case.get("expected_reply_any"):
+            if not any(item in reply for item in case["expected_reply_any"]):
+                expectation_failures.append("reply_missing_expected_signal")
         results.append(
             {
                 "name": case["name"],
@@ -64,6 +71,31 @@ def run_cases() -> list[dict[str, Any]]:
         )
         memory_path.unlink(missing_ok=True)
     return results
+
+
+def run_case_pipeline(pipeline: ReplyPipeline, case: dict[str, Any]) -> Any:
+    """Run one case either as a single batch or turn-by-turn server simulation."""
+    if not case.get("turn_by_turn"):
+        return pipeline.run(case["history"])
+
+    simulated_history: list[dict[str, str]] = []
+    result = None
+    for raw_item in case["history"]:
+        item = normalize_eval_message(raw_item)
+        simulated_history.append(item)
+        if item["role"] == "user":
+            result = pipeline.run(simulated_history[-20:])
+            simulated_history.append({"role": "assistant", "content": result.final_reply})
+    if result is None:
+        result = pipeline.run(simulated_history[-20:])
+    return result
+
+
+def normalize_eval_message(item: Any) -> dict[str, str]:
+    """Normalize one fixture message into the chat server shape."""
+    if isinstance(item, str):
+        return {"role": "user", "content": item}
+    return {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
 
 
 def main() -> None:

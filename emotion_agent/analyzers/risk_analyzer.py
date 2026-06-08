@@ -1,29 +1,37 @@
-"""Risk analyzer placeholder."""
+"""Risk analyzer for progression opportunities and boundary signals."""
 
 from __future__ import annotations
 
-if __package__ in {None, ""}:
-    import sitecustomize  # noqa: F401
-
 from emotion_agent.analyzers.base import BaseAnalyzer
-from emotion_agent.utils.types import AgentContext, AnalysisResult, RiskLevel
+from emotion_agent.utils.types import AgentContext, AnalysisResult
+from .risk_detector import ConquestOpportunityDetector
 
 
 class RiskAnalyzer(BaseAnalyzer):
-    """Detects safety and escalation risk signals in the current context."""
+    """Detect support needs, progression windows, and caution signals."""
+
+    def __init__(self):
+        self.detector = ConquestOpportunityDetector()
 
     @property
     def name(self) -> str:
-        """Return the stable analyzer name."""
         return "risk"
 
     def analyze(self, context: AgentContext) -> AnalysisResult:
-        """Return a placeholder risk analysis result."""
+        history = [*context.recent_messages, context.current_message]
+        report = self.detector.detect(history)
+
         return AnalysisResult(
             analyzer_name=self.name,
-            label=RiskLevel.UNKNOWN.value,
-            confidence=0.0,
-            metadata={"recent_message_count": len(context.recent_messages)},
+            label=report.risk_level,
+            confidence=90,
+            metadata={
+                "vulnerability": report.vulnerability,
+                "sexual_openness": report.sexual_openness,
+                "compliance": report.compliance,
+                "escalation_potential": report.escalation_potential,
+                "strategy_instruction": report.strategy_instruction,
+            }
         )
 
 

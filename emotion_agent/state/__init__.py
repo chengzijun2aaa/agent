@@ -8,8 +8,6 @@ if __package__ in {None, ""}:
 from emotion_agent.state.conversation_state import ConversationState
 from emotion_agent.state.emotional_state import EmotionalState
 from emotion_agent.state.relationship_state_machine import (
-    FavorabilityStageInfo,
-    RelationshipSignal,
     RelationshipStage,
     RelationshipState,
     RelationshipStateMachine,
@@ -19,8 +17,6 @@ from emotion_agent.state.session_state import SessionState
 __all__ = [
     "ConversationState",
     "EmotionalState",
-    "FavorabilityStageInfo",
-    "RelationshipSignal",
     "RelationshipStage",
     "RelationshipState",
     "RelationshipStateMachine",

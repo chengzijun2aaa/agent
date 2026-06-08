@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-CURRENT_MEMORY_VERSION = 1
+CURRENT_MEMORY_VERSION = 2
 
 
 class MemoryFact(BaseModel):
@@ -34,6 +34,46 @@ class MemoryFact(BaseModel):
         if value is None:
             return ""
         return str(value).strip()
+
+
+class FemaleProfile(BaseModel):
+    """Long-lived interaction profile for one woman.
+
+    The profile is not a label for the person. It is a compact operating model
+    for the assistant: how fast to progress, how direct to be, and what kind of
+    emotional feedback tends to land well with this specific conversation.
+    """
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    label: str = "平衡观察型"
+    communication_style: str = "balanced"
+    progression_pace: float = Field(default=1.0, ge=0.6, le=1.4)
+    leadership_preference: int = Field(default=50, ge=0, le=100)
+    reassurance_need: int = Field(default=50, ge=0, le=100)
+    playfulness: int = Field(default=50, ge=0, le=100)
+    sensitivity: int = Field(default=50, ge=0, le=100)
+    boundary_sensitivity: int = Field(default=50, ge=0, le=100)
+    preferred_feedback: list[str] = Field(default_factory=list)
+    avoided_moves: list[str] = Field(default_factory=list)
+    last_signals: list[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def summary(self) -> dict[str, Any]:
+        """Return a compact profile for planning, generation, and UI debug panels."""
+        return {
+            "label": self.label,
+            "communication_style": self.communication_style,
+            "progression_pace": round(self.progression_pace, 2),
+            "leadership_preference": self.leadership_preference,
+            "reassurance_need": self.reassurance_need,
+            "playfulness": self.playfulness,
+            "sensitivity": self.sensitivity,
+            "boundary_sensitivity": self.boundary_sensitivity,
+            "preferred_feedback": list(self.preferred_feedback),
+            "avoided_moves": list(self.avoided_moves),
+            "last_signals": list(self.last_signals),
+        }
 
 
 class PetMemory(BaseModel):
@@ -106,6 +146,7 @@ class UserMemory(BaseModel):
     dietary_habits: list[MemoryFact] = Field(default_factory=list)
     travel_experiences: list[MemoryFact] = Field(default_factory=list)
     important_events: list[MemoryFact] = Field(default_factory=list)
+    profile: FemaleProfile = Field(default_factory=FemaleProfile)
 
     def summary(self) -> dict[str, Any]:
         """Return a compact dictionary for prompt injection or debugging."""
@@ -120,6 +161,7 @@ class UserMemory(BaseModel):
             "dietary_habits": [item.value for item in self.dietary_habits],
             "travel_experiences": [item.value for item in self.travel_experiences],
             "important_events": [item.value for item in self.important_events],
+            "profile": self.profile.summary(),
         }
 
 
@@ -151,6 +193,13 @@ class MemoryStore(BaseModel):
                 upgraded["created_at"] = data["created_at"]
             if data.get("updated_at"):
                 upgraded["updated_at"] = data["updated_at"]
+            return upgraded
+        if version < 2:
+            upgraded = dict(data)
+            user = dict(upgraded.get("user", {}))
+            user.setdefault("profile", FemaleProfile().model_dump(mode="json"))
+            upgraded["user"] = user
+            upgraded["version"] = CURRENT_MEMORY_VERSION
             return upgraded
         return data
 
@@ -203,7 +252,7 @@ class MemoryManager:
 
     def extract_memory(self, text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> MemoryExtraction:
         """Extract structured memory facts from text or chat messages."""
-        text = self._coerce_text(text_or_messages)
+        text = self._coerce_user_text(text_or_messages)
         extraction = MemoryExtraction()
 
         extraction.name = self._extract_name(text)
@@ -221,13 +270,36 @@ class MemoryManager:
     def update_memory(
         self,
         text_or_memory: str | Sequence[str | Mapping[str, Any]] | MemoryExtraction | Mapping[str, Any],
+        *,
+        learn_profile: bool = True,
     ) -> MemoryStore:
         """Extract and merge new facts, then save the updated memory document."""
+        profile_text = ""
+        if learn_profile and (
+            isinstance(text_or_memory, str) or not isinstance(text_or_memory, (MemoryExtraction, Mapping))
+        ):
+            profile_text = self._coerce_user_text(text_or_memory)
         extraction = self._coerce_extraction(text_or_memory)
         self._merge_extraction(extraction)
+        if profile_text:
+            self._update_profile_from_text(profile_text)
         self.memory.updated_at = datetime.now(timezone.utc)
         self.save_memory(self.memory)
         return self.memory
+
+    def update_profile(
+        self,
+        text_or_messages: str | Sequence[str | Mapping[str, Any]],
+        *,
+        analysis: Mapping[str, Any] | None = None,
+        relationship_state: Mapping[str, Any] | None = None,
+    ) -> FemaleProfile:
+        """Update and persist the per-person interaction profile."""
+        text = self._coerce_user_text(text_or_messages)
+        self._update_profile_from_text(text, analysis=analysis, relationship_state=relationship_state)
+        self.memory.updated_at = datetime.now(timezone.utc)
+        self.save_memory(self.memory)
+        return self.memory.user.profile
 
     def load_memory(self) -> MemoryStore:
         """Load memory from disk, creating a new validated store when missing."""
@@ -296,6 +368,109 @@ class MemoryManager:
         user.dietary_habits = self._merge_fact_list(user.dietary_habits, extraction.dietary_habits)
         user.travel_experiences = self._merge_fact_list(user.travel_experiences, extraction.travel_experiences)
         user.important_events = self._merge_fact_list(user.important_events, extraction.important_events)
+
+    def _update_profile_from_text(
+        self,
+        text: str,
+        *,
+        analysis: Mapping[str, Any] | None = None,
+        relationship_state: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Learn interaction preferences from recent chat text."""
+        if not text.strip():
+            return
+
+        profile = self.memory.user.profile
+        lower = text.lower()
+        signals: list[str] = []
+
+        if any(word in lower for word in ("哈哈", "笑死", "逗你", "开玩笑", "你猜", "笨", "坏", "哼")):
+            profile.playfulness = self._nudge_int(profile.playfulness, 12)
+            profile.communication_style = "playful"
+            profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "轻调侃")
+            signals.append("调侃接受度高")
+
+        if any(word in lower for word in ("累", "难受", "委屈", "压力", "烦死", "想哭", "崩溃", "没人懂")):
+            profile.reassurance_need = self._nudge_int(profile.reassurance_need, 14)
+            profile.sensitivity = self._nudge_int(profile.sensitivity, 8)
+            profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "先安抚再安排")
+            signals.append("需要先被接住")
+
+        if any(word in lower for word in ("你安排", "你决定", "听你的", "都可以", "随便你", "看你")):
+            profile.leadership_preference = self._nudge_int(profile.leadership_preference, 14)
+            profile.progression_pace = self._nudge_float(profile.progression_pace, 0.06)
+            profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "清晰安排")
+            signals.append("接受清晰带领")
+
+        if any(word in lower for word in ("见面", "一起", "周末", "有空", "出来", "吃饭", "咖啡", "电影")):
+            profile.leadership_preference = self._nudge_int(profile.leadership_preference, 8)
+            profile.progression_pace = self._nudge_float(profile.progression_pace, 0.08)
+            profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "具体邀约")
+            signals.append("邀约窗口")
+
+        if any(word in lower for word in ("别这样", "太快", "有压力", "别闹", "保持距离", "不舒服")):
+            profile.boundary_sensitivity = self._nudge_int(profile.boundary_sensitivity, 16)
+            profile.sensitivity = self._nudge_int(profile.sensitivity, 10)
+            profile.progression_pace = self._nudge_float(profile.progression_pace, -0.12)
+            profile.avoided_moves = self._append_unique(profile.avoided_moves, "快速推进")
+            signals.append("边界敏感")
+
+        if any(word in lower for word in ("别的女生", "别的女人", "她是谁", "吃醋", "是不是喜欢", "聊得开心")):
+            profile.reassurance_need = self._nudge_int(profile.reassurance_need, 10)
+            profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "稳定确定感")
+            signals.append("需要确定感")
+
+        if any(word in lower for word in ("哦", "嗯", "随便", "晚点说", "再说", "没空", "不想说")):
+            profile.sensitivity = self._nudge_int(profile.sensitivity, 8)
+            profile.progression_pace = self._nudge_float(profile.progression_pace, -0.05)
+            profile.avoided_moves = self._append_unique(profile.avoided_moves, "连续追问")
+            signals.append("低能量或冷淡")
+
+        if analysis:
+            intent = str(analysis.get("intent", ""))
+            if intent in {"邀约", "释放好感", "撒娇"}:
+                profile.progression_pace = self._nudge_float(profile.progression_pace, 0.05)
+            if intent in {"冷淡", "敷衍", "撤退"}:
+                profile.progression_pace = self._nudge_float(profile.progression_pace, -0.06)
+
+        if relationship_state:
+            favorability = float(relationship_state.get("favorability_score", 0) or 0)
+            if favorability >= 40:
+                profile.leadership_preference = self._nudge_int(profile.leadership_preference, 4)
+
+        profile.last_signals = (signals + profile.last_signals)[:10]
+        profile.label = self._profile_label(profile)
+        profile.updated_at = datetime.now(timezone.utc)
+
+    @staticmethod
+    def _profile_label(profile: FemaleProfile) -> str:
+        """Return a readable profile label from current score bands."""
+        if profile.boundary_sensitivity >= 70 or profile.progression_pace <= 0.82:
+            return "慢热边界型"
+        if profile.reassurance_need >= 70:
+            return "情绪安抚型"
+        if profile.playfulness >= 68:
+            return "轻松调侃型"
+        if profile.leadership_preference >= 68:
+            return "清晰带领型"
+        return "平衡观察型"
+
+    @staticmethod
+    def _append_unique(values: list[str], value: str, *, limit: int = 8) -> list[str]:
+        """Append a value once while preserving recent preference order."""
+        result = [item for item in values if item != value]
+        result.insert(0, value)
+        return result[:limit]
+
+    @staticmethod
+    def _nudge_int(value: int, delta: int) -> int:
+        """Move an integer score while keeping it inside 0-100."""
+        return max(0, min(100, int(value) + delta))
+
+    @staticmethod
+    def _nudge_float(value: float, delta: float) -> float:
+        """Move progression pace while keeping it inside the model bounds."""
+        return max(0.6, min(1.4, float(value) + delta))
 
     @staticmethod
     def _choose_fact(current: MemoryFact | None, incoming: MemoryFact | None) -> MemoryFact | None:
@@ -500,6 +675,22 @@ class MemoryManager:
                 parts.append(item)
             else:
                 parts.append(str(item.get("content", item.get("text", item.get("message", "")))))
+        return "\n".join(part for part in parts if part)
+
+    @staticmethod
+    def _coerce_user_text(text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> str:
+        """Convert only the other person's messages into a single text block."""
+        if isinstance(text_or_messages, str):
+            return text_or_messages
+        parts: list[str] = []
+        for item in text_or_messages:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            role = str(item.get("role", "user")).lower()
+            if role in {"assistant", "me", "boy", "我"}:
+                continue
+            parts.append(str(item.get("content", item.get("text", item.get("message", "")))))
         return "\n".join(part for part in parts if part)
 
     @staticmethod

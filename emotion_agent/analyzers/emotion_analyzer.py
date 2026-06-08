@@ -1,29 +1,38 @@
-"""Emotion analyzer placeholder."""
+"""Emotion Analyzer - 深度心理+性情绪探测"""
 
 from __future__ import annotations
-
-if __package__ in {None, ""}:
-    import sitecustomize  # noqa: F401
 
 from emotion_agent.analyzers.base import BaseAnalyzer
 from emotion_agent.utils.types import AgentContext, AnalysisResult, EmotionLabel
 
 
 class EmotionAnalyzer(BaseAnalyzer):
-    """Extracts coarse emotion signals from the current conversation context."""
-
     @property
     def name(self) -> str:
-        """Return the stable analyzer name."""
         return "emotion"
 
     def analyze(self, context: AgentContext) -> AnalysisResult:
-        """Return a placeholder emotion analysis result."""
+        text = context.current_message.content.lower() + " " + " ".join([m.content.lower() for m in context.recent_messages[-5:]])
+
+        # 更细粒度情绪 + 性欲信号
+        if any(k in text for k in ["想你", "抱抱", "晚安想你", "好热", "洗澡", "坏坏"]):
+            emotion = "sexual_interest"
+            confidence = 85
+        elif any(k in text for k in ["难受", "委屈", "没人懂", "压力好大"]):
+            emotion = "vulnerable"
+            confidence = 90
+        elif any(k in text for k in ["哈哈", "笑死", "逗你"]):
+            emotion = "playful"
+            confidence = 75
+        else:
+            emotion = "neutral"
+            confidence = 60
+
         return AnalysisResult(
             analyzer_name=self.name,
-            label=EmotionLabel.UNKNOWN.value,
-            confidence=0.0,
-            metadata={"user_id": context.user_id},
+            label=emotion,
+            confidence=confidence,
+            metadata={"raw_text": context.current_message.content}
         )
 
 

@@ -1,53 +1,168 @@
-"""Humanize generated replies into WeChat-like text."""
+"""Response Humanizer - concise, natural WeChat wording."""
 
 from __future__ import annotations
 
-if __package__ in {None, ""}:
-    import sitecustomize  # noqa: F401
-
+import random
 import re
-from typing import Sequence
+
+from typing import Any, Sequence
 
 from emotion_agent.generator.reply_generator import ReplyCandidate
+from emotion_agent.humanizer.base import BaseHumanizer
+from emotion_agent.utils.types import AgentContext, GenerationResult
+
+
+class ResponseHumanizer(BaseHumanizer):
+    """Turn generated drafts into short, natural WeChat-style replies."""
+
+    def humanize(self, context: AgentContext, draft: GenerationResult) -> GenerationResult:
+        text = draft.text.strip()
+        if not text:
+            text = "嗯？"
+        serious = self._is_serious_reply(text)
+
+        text = self._remove_therapist_tone(text)
+        serious = serious or self._is_serious_reply(text)
+        text = self._add_colloquial_rhythm(text, serious=serious)
+        text = self._add_imperfection(text, serious=serious)
+        text = self._shorten_if_needed(text)
+
+        return GenerationResult(text=text.strip(), provider=draft.provider, metadata=draft.metadata)
+
+    def _remove_therapist_tone(self, text: str) -> str:
+        """Remove common therapist/assistant phrasing."""
+        replacements = [
+            ("我理解", "懂"),
+            ("你的情绪", ""),
+            ("先缓一口气", "先喘口气"),
+            ("你可以", "你就"),
+            ("辛苦了", "辛苦"),
+            ("我听着呢", "说"),
+            ("我懂你", "懂"),
+            ("提供支持", ""),
+            ("情绪价值", ""),
+            ("慢慢说", "继续"),
+            ("别太难过", "别想太多"),
+        ]
+        for old, new in replacements:
+            text = text.replace(old, new)
+        return text
+
+    def _add_colloquial_rhythm(self, text: str, *, serious: bool = False) -> str:
+        """Add light colloquial rhythm without changing meaning."""
+        if len(text) > 35 and random.random() > 0.6:
+            # 随机断句
+            if "，" in text:
+                parts = text.split("，", 1)
+                filler = "" if serious else random.choice(["", "哈，"])
+                text = parts[0] + "，" + filler + parts[1]
+        
+        return text
+
+    def _add_imperfection(self, text: str, *, serious: bool = False) -> str:
+        """Add small imperfections while avoiding semantic corruption."""
+        tricks = [
+            lambda t: t.rstrip("。！？") + "…" if random.random() > 0.75 else t,
+            lambda t: t if serious and len(t) < 30 else t,
+            lambda t: t.replace("真的", "真") if "真的" in t else t,
+        ]
+        
+        for trick in tricks:
+            if random.random() > 0.65:
+                text = trick(text)
+        
+        return text
+
+    def _shorten_if_needed(self, text: str) -> str:
+        """强制短 + 松"""
+        if len(text) > 38:
+            text = text[:38].rstrip("，。、 ") + random.choice(["…", "", ""])
+        return text.strip()
+
+    @staticmethod
+    def _is_serious_reply(text: str) -> bool:
+        """Return whether a reply is handling stress, sadness, or support."""
+        serious_words = (
+            "累",
+            "难受",
+            "委屈",
+            "压力",
+            "烦",
+            "硬撑",
+            "喘口气",
+            "站你",
+            "我听着",
+            "别自己扛",
+            "这时候",
+            "吃醋",
+            "放心",
+            "查我岗",
+            "别的女生",
+            "别的女人",
+            "哄你",
+            "带你缓缓",
+            "去缓缓",
+            "补回来",
+            "记着",
+            "靠我",
+            "先说",
+        )
+        return any(word in text for word in serious_words)
 
 
 class Humanizer:
-    """Makes candidate replies shorter, warmer, and more WeChat-like."""
+    """Compatibility adapter used by the reply pipeline.
 
-    STIFF_PATTERNS: tuple[tuple[str, str], ...] = (
-        ("我理解你的情绪", "懂你这会儿的感觉"),
-        ("先缓一口气", "先喘口气"),
-        ("你可以", "你就"),
-        ("辛苦了，今天别硬撑太久", "辛苦了，别再死撑"),
-        ("我在意，只是不想说得太夸张", "在意啊，只是不想说太满"),
-        ("我没有敷衍你，这点你可以放心", "我没敷衍你，这个你放心"),
-    )
+    The newer ``ResponseHumanizer`` works on one ``GenerationResult`` inside
+    the legacy agent path. The web reply pipeline still passes a list of
+    ``ReplyCandidate`` objects, so this adapter keeps that path startable.
+    """
+
+    def __init__(self) -> None:
+        self.response_humanizer = ResponseHumanizer()
 
     def humanize(self, candidates: Sequence[ReplyCandidate]) -> list[ReplyCandidate]:
-        """Humanize a sequence of candidates."""
-        return [candidate.model_copy(update={"text": self._humanize_text(candidate.text)}) for candidate in candidates]
+        """Humanize reply candidates while preserving their metadata."""
+        return [self._humanize_candidate(candidate) for candidate in candidates]
 
-    def _humanize_text(self, text: str) -> str:
-        """Humanize one reply string."""
-        cleaned = re.sub(r"\s+", " ", text).strip()
-        cleaned = cleaned.replace("您", "你")
-        cleaned = cleaned.replace("请你", "你可以")
-        for before, after in self.STIFF_PATTERNS:
-            cleaned = cleaned.replace(before, after)
-        cleaned = cleaned.replace("我会认真想", "我还真会多想")
-        cleaned = cleaned.replace("听起来", "")
-        cleaned = cleaned.replace("确实", "是挺")
-        cleaned = re.sub(r"(你继续说，我在听|我在，慢慢说)", "你继续", cleaned)
-        cleaned = cleaned.rstrip("。")
-        if len(cleaned) > 42:
-            cleaned = cleaned[:42].rstrip("，,、 ") + "..."
-        cleaned = cleaned.strip("，, ")
-        return cleaned
+    def _humanize_candidate(self, candidate: ReplyCandidate) -> ReplyCandidate:
+        """Humanize one reply candidate."""
+        draft = GenerationResult(text=candidate.text, metadata=candidate.metadata)
+        context = AgentContext(
+            user_id="pipeline",
+            current_message=ReplyCandidateCompatibility.message(candidate.text),
+            recent_messages=[],
+            state={},
+        )
+        result = self.response_humanizer.humanize(context=context, draft=draft)
+        return candidate.model_copy(update={"text": result.text})
+
+
+class ReplyCandidateCompatibility:
+    """Small helper to avoid importing extra pipeline context objects elsewhere."""
+
+    @staticmethod
+    def message(text: str) -> Any:
+        """Create the minimal message object required by ``AgentContext``."""
+        from emotion_agent.utils.types import Message, SenderRole
+
+        return Message(role=SenderRole.ASSISTANT, content=text)
 
 
 def _demo() -> None:
-    """Run a small module smoke test."""
-    print(Humanizer().humanize([ReplyCandidate(text="您好，请你不要太难过。")])[0].text)
+    from emotion_agent.utils.types import Message, SenderRole, GenerationResult, AgentContext
+    humanizer = ResponseHumanizer()
+    
+    draft = GenerationResult(text="我理解你现在很难受，先缓一口气，我会一直陪着你的。")
+    context = AgentContext(
+        user_id="test",
+        current_message=Message(role=SenderRole.USER, content="今天好累想哭"),
+        recent_messages=[],
+        state={}
+    )
+    
+    result = humanizer.humanize(context, draft)
+    print(result.text)
 
 
 if __name__ == "__main__":

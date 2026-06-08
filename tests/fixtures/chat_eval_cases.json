@@ -41,7 +41,7 @@
       {"role": "user", "content": "周末要不要一起吃个饭"}
     ],
     "expected_intent": "邀约",
-    "expected_stage": "L2",
+    "expected_stage": "L3",
     "min_favorability": 15,
     "max_favorability": 55,
     "forbidden_phrases": ["我会认真分析", "让我们"],
@@ -56,5 +56,37 @@
     "max_favorability": 45,
     "forbidden_phrases": ["从你的描述来看", "你的情绪我理解"],
     "notes": "别变成心理咨询腔。"
+  },
+  {
+    "name": "clear_leadership_profile",
+    "turn_by_turn": true,
+    "history": [
+      {"role": "user", "content": "你安排就好，我听你的"},
+      {"role": "user", "content": "周末一起吃饭吧"}
+    ],
+    "expected_intent": "邀约",
+    "min_favorability": 20,
+    "max_favorability": 65,
+    "expected_profile_min": {
+      "leadership_preference": 65
+    },
+    "expected_reply_any": ["安排", "定", "时间", "地方"],
+    "forbidden_phrases": ["随便你", "你说怎样就怎样", "我无条件"],
+    "notes": "她接受安排时，回复要有清晰带领感，但不能变成讨好或服从。"
+  },
+  {
+    "name": "boundary_slow_down_profile",
+    "turn_by_turn": true,
+    "history": [
+      {"role": "user", "content": "别这样，有点太快了"},
+      {"role": "user", "content": "最近再说吧"}
+    ],
+    "expected_intent": "冷淡",
+    "max_favorability": 30,
+    "expected_profile_min": {
+      "boundary_sensitivity": 60
+    },
+    "forbidden_phrases": ["别临时怂", "必须", "赶紧", "跟我算", "现在就"],
+    "notes": "她给边界反馈时，系统要后撤降压，不能把主导感误做成逼迫。"
   }
 ]

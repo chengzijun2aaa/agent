@@ -46,8 +46,9 @@ class ConversationAnalysis(BaseModel):
     interest_score: int = Field(default=0, ge=0, le=100, description="Interest score from 0 to 100.")
     relationship_stage: str = Field(default="L1", description="Estimated relationship stage (L1-L6).")
     risk_level: str = Field(default="low", description="Risk level: low, medium, or high.")
+    user_raw_text: str = Field(default="", description="Latest user message for downstream strategy use.")
 
-    @field_validator("emotion", "intent", "relationship_stage", "risk_level", mode="before")
+    @field_validator("emotion", "intent", "relationship_stage", "risk_level", "user_raw_text", mode="before")
     @classmethod
     def normalize_text(cls, value: object) -> str:
         """Normalize text-like fields."""
@@ -174,6 +175,7 @@ class ConversationAnalyzer(BaseAnalyzer):
 
     HIGH_RISK_KEYWORDS: tuple[str, ...] = ("自杀", "轻生", "不想活", "活不下去", "伤害自己", "结束生命")
     MEDIUM_RISK_KEYWORDS: tuple[str, ...] = ("崩溃", "绝望", "抑郁", "失眠", "喝酒", "撑不住", "真的够呛")
+    GREETING_TEXTS: tuple[str, ...] = ("你好", "嗨", "哈喽", "hello", "hi", "nihao")
 
     def __init__(
         self,
@@ -195,10 +197,9 @@ class ConversationAnalyzer(BaseAnalyzer):
     def analyze(self, chat_history: ChatHistory | AgentContext) -> ConversationAnalysis:
         """Analyze recent chat history and return a Pydantic structured result."""
         messages = self._normalize_history(chat_history)[-self.max_history :]
-        prompt = self.prompt_template.build(messages)
 
         if self.llm is not None:
-            llm_result = self._analyze_with_llm(prompt)
+            llm_result = self._analyze_with_llm(messages)
             if llm_result is not None:
                 return llm_result
 
@@ -209,12 +210,26 @@ class ConversationAnalyzer(BaseAnalyzer):
         messages = self._normalize_history(chat_history)[-self.max_history :]
         return self.prompt_template.build(messages)
 
-    def _analyze_with_llm(self, prompt: str) -> ConversationAnalysis | None:
+    def _analyze_with_llm(self, chat_history: Sequence[ChatMessage]) -> ConversationAnalysis | None:
         """Ask an optional LLM provider for structured JSON and validate it."""
-        response = self.llm.analyze(prompt, temperature=0.0, max_tokens=512)
+        system_prompt = (
+            "你是一个微信聊天分析器。"
+            "你的任务不是安慰，也不是回复，而是读懂最近对话。"
+            "请只输出 JSON。不要解释，不要 markdown，不要补充字段。"
+        )
+        response = self.llm.analyze(
+            messages=self._llm_messages(chat_history),
+            system_prompt=system_prompt,
+            temperature=0.0,
+            max_tokens=320,
+        )
         if not isinstance(response, LLMResponse) or not response.success:
             return None
-        return self._parse_analysis_json(response.content)
+        parsed = self._parse_analysis_json(response.content)
+        if parsed is None:
+            return None
+        latest_user = self._latest_user_text(chat_history)
+        return parsed.model_copy(update={"user_raw_text": latest_user})
 
     def _parse_analysis_json(self, content: str) -> ConversationAnalysis | None:
         """Parse and validate JSON emitted by an LLM provider."""
@@ -259,21 +274,68 @@ class ConversationAnalyzer(BaseAnalyzer):
 
     def _analyze_with_rules(self, chat_history: Sequence[ChatMessage]) -> ConversationAnalysis:
         """Produce a deterministic local analysis when no LLM result is available."""
-        joined_text = "\n".join(message.content for message in chat_history)
-        intent_scores = self._score_intents(joined_text, chat_history)
+        user_messages = self._user_messages(chat_history) or list(chat_history)
+        joined_text = "\n".join(message.content for message in user_messages)
+        latest_user = self._latest_user_text(chat_history)
+        if self._is_greeting(latest_user):
+            return ConversationAnalysis(
+                emotion="友好",
+                intent="分享生活",
+                interest_score=30,
+                relationship_stage="L1" if len(chat_history) <= 2 else "L2",
+                risk_level="low",
+                user_raw_text=latest_user,
+            )
+        intent_scores = self._score_intents(joined_text, user_messages)
         intent = max(intent_scores, key=intent_scores.get) if intent_scores else "分享生活"
 
         if intent_scores and intent_scores[intent] <= 0:
-            intent = "冷淡" if self._coldness_score(chat_history) >= 2 else "分享生活"
+            intent = "冷淡" if self._coldness_score(user_messages) >= 2 else "分享生活"
 
-        interest_score = self._interest_score(chat_history=chat_history, intent=intent)
+        interest_score = self._interest_score(chat_history=user_messages, intent=intent)
         return ConversationAnalysis(
             emotion=self._emotion(joined_text=joined_text, intent=intent),
             intent=intent,
             interest_score=interest_score,
-            relationship_stage=self._relationship_stage(chat_history, intent, interest_score),
+            relationship_stage=self._relationship_stage(user_messages, intent, interest_score),
             risk_level=self._risk_level(joined_text),
+            user_raw_text=latest_user,
         )
+
+    @classmethod
+    def _is_greeting(cls, text: str) -> bool:
+        """Return whether a short message is just a greeting."""
+        normalized = re.sub(r"\s+", "", text.lower().strip())
+        return normalized in cls.GREETING_TEXTS
+
+    def _llm_messages(self, chat_history: Sequence[ChatMessage]) -> list[dict[str, str]]:
+        """Build structured messages for LLM-first analysis."""
+        schema = (
+            "请阅读最近聊天，并返回 JSON："
+            '{"emotion":"","intent":"","interest_score":0,"relationship_stage":"","risk_level":""}。'
+            "intent 只能从这些值里选一个：分享生活、调侃、测试、冷淡、吃醋、抱怨、邀约、求安慰、分享情绪、工作压力。"
+            "relationship_stage 只能填 L1-L6。risk_level 只能填 low、medium、high。"
+            "判断时优先看最近 5 条，不要被很久以前的话带偏。"
+        )
+        messages: list[dict[str, str]] = [{"role": "user", "content": schema}]
+        for message in chat_history:
+            role = "assistant" if message.role in {"assistant", "me", "boy", "我"} else "user"
+            speaker = "我" if role == "assistant" else "她"
+            messages.append({"role": role, "content": f"{speaker}：{message.content}"})
+        return messages
+
+    @staticmethod
+    def _latest_user_text(chat_history: Sequence[ChatMessage]) -> str:
+        """Return the latest user-side message for downstream components."""
+        for message in reversed(chat_history):
+            if message.role not in {"assistant", "me", "boy", "我"}:
+                return message.content
+        return chat_history[-1].content if chat_history else ""
+
+    @staticmethod
+    def _user_messages(chat_history: Sequence[ChatMessage]) -> list[ChatMessage]:
+        """Return only user-side messages for intent-heavy rule analysis."""
+        return [message for message in chat_history if message.role not in {"assistant", "me", "boy", "我"}]
 
     def _score_intents(
         self,
@@ -282,16 +344,25 @@ class ConversationAnalyzer(BaseAnalyzer):
     ) -> dict[str, int]:
         """Score supported intents with transparent keyword rules."""
         lowered_text = joined_text.lower()
+        latest_user = self._latest_user_text(chat_history).lower()
         scores: dict[str, int] = {}
         for intent, keywords in self.KEYWORDS.items():
             scores[intent] = sum(2 for keyword in keywords if keyword.lower() in lowered_text)
+            scores[intent] += sum(3 for keyword in keywords if keyword.lower() in latest_user)
 
         coldness = self._coldness_score(chat_history)
         scores["冷淡"] = scores.get("冷淡", 0) + coldness * 3
-        
+
+        if any(word in latest_user for word in ("一起", "吃饭", "电影", "见面", "出来", "周末", "有空")):
+            scores["邀约"] = scores.get("邀约", 0) + 8
         if "一起" in joined_text and any(word in joined_text for word in ("吃饭", "电影", "见面", "出来", "面基")):
             scores["邀约"] = scores.get("邀约", 0) + 5
-        if any(word in joined_text for word in ("压力", "加班", "老板", "项目", "对线", "硬撑")):
+        if any(word in latest_user for word in ("别的女生", "她是谁", "他是谁", "还聊", "和别人", "不理我")):
+            scores["吃醋"] = scores.get("吃醋", 0) + 10
+            scores["测试"] = scores.get("测试", 0) + 3
+        if any(word in latest_user for word in ("压力", "加班", "老板", "项目", "对线", "硬撑")):
+            scores["工作压力"] = scores.get("工作压力", 0) + 4
+        elif any(word in joined_text for word in ("压力", "加班", "老板", "项目", "对线", "硬撑")):
             scores["工作压力"] = scores.get("工作压力", 0) + 4
         return scores
 

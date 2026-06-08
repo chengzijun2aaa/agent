@@ -6,9 +6,10 @@ if __package__ in {None, ""}:
     import sitecustomize  # noqa: F401
 
 from emotion_agent.storage.base import BaseStorage
+from emotion_agent.storage.file_storage import FileStorage
 from emotion_agent.storage.memory_storage import InMemoryStorage
 
-__all__ = ["BaseStorage", "InMemoryStorage"]
+__all__ = ["BaseStorage", "FileStorage", "InMemoryStorage"]
 
 
 def _demo() -> None:

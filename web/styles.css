@@ -110,6 +110,15 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.metric small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .panel-section {
   border-top: 1px solid var(--line);
   padding-top: 14px;

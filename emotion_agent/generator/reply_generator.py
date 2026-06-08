@@ -1,25 +1,22 @@
-"""Generate candidate WeChat replies from a reply plan with advanced preprocessing and humanization."""
+"""Generate emotionally intelligent WeChat reply candidates."""
 
 from __future__ import annotations
 
 if __package__ in {None, ""}:
     import sitecustomize  # noqa: F401
 
-from typing import Any, Mapping, Sequence
+import hashlib
 import re
+from typing import Any, Mapping, Sequence
+
 from pydantic import BaseModel, ConfigDict, Field
 
-class ReplyPlan(BaseModel):
-    """Strategy input from upper planner."""
-    objective: str = "自然回复"
-    tone: str = "轻松"
-    candidate_count: int = 6  # 提升至6条候选
-    tactics: list[str] = Field(default_factory=list)
-    avoid: list[str] = Field(default_factory=list)
+from emotion_agent.strategy.strategy_planner import ReplyPlan
 
 
 class ReplyCandidate(BaseModel):
     """One generated reply candidate."""
+
     model_config = ConfigDict(extra="ignore")
 
     text: str
@@ -28,15 +25,15 @@ class ReplyCandidate(BaseModel):
 
 
 class ReplyGenerator:
-    """Generates six candidate replies with LLM formatting and humanized fallback."""
+    """Generates varied replies that optimize empathy, authenticity, and attraction."""
 
-    STAGE_DESC = {
-        "L1": "刚认识",
-        "L2": "认识不久",
-        "L3": "比较熟悉",
-        "L4": "存在明显好感",
-        "L5": "已经见过面",
-        "L6": "亲密关系"
+    STAGE_DESC: Mapping[str, str] = {
+        "L1": "刚认识/陌生：礼貌、低压，不要装熟",
+        "L2": "刚认识：友好、轻松，适度打开话题",
+        "L3": "熟悉：能接住细节，可以主动延展",
+        "L4": "暧昧：俏皮、有在意感，但不过界",
+        "L5": "约会后：亲近、有回忆感和下次期待",
+        "L6": "恋爱：明确偏爱、安心陪伴",
     }
 
     def __init__(self, llm: Any | None = None) -> None:
@@ -50,88 +47,13 @@ class ReplyGenerator:
         relationship_state: Mapping[str, Any],
         memory: Mapping[str, Any],
     ) -> list[ReplyCandidate]:
-        """Generate candidate replies and pass through optionally-implemented Ranker."""
-        candidates = []
+        """Generate reply candidates, preferring LLM output with rule fallback."""
+        candidates: list[ReplyCandidate] = []
         if self.llm is not None:
             candidates = self._generate_with_llm(chat_history, plan, relationship_state, memory)
-        
-        # 如果 LLM 生成失败或为空，自动降级到更自然的 Rules 兜底
         if not candidates:
             candidates = self._generate_with_rules(chat_history, plan, relationship_state, memory)
-
-        # 💡 【防御战线 C：精排层物理切除】
-        # 天王老子来了，只要不是在聊猫，带“猫”的候选直接在代码层做物理清洗！
-        latest_msg = self._latest_text(chat_history)
-        candidates = self._rank_candidates(candidates, latest_msg)
-
-        return candidates[: plan.candidate_count]
-
-    def _build_chat_history(self, chat_history: Sequence[Mapping[str, Any] | str]) -> str:
-        """格式化聊天记录，截取最近20轮"""
-        result = []
-        for msg in chat_history[-20:]:
-            if isinstance(msg, str):
-                result.append(msg)
-                continue
-
-            role = msg.get("role", "unknown")
-            content = (
-                msg.get("content")
-                or msg.get("text")
-                or msg.get("message")
-                or ""
-            )
-
-            if role in ["assistant", "boy", "me"]:
-                role = "我"
-            elif role in ["user", "girl", "her"]:
-                role = "她"
-
-            result.append(f"{role}：{content}")
-
-        return "\n".join(result)
-
-    def _build_memory_summary(self, memory: Mapping[str, Any], latest_msg: str) -> str:
-        """💡【防御战线 A：记忆源头控制】"""
-        parts = []
-
-        city = memory.get("city")
-        if city:
-            parts.append(f"她在{city}")
-
-        job = memory.get("job")
-        if job:
-            parts.append(f"职业是{job}")
-
-        # 只有在最新聊天里主动提到了“猫”，或者上下文在聊宠物，才把宠物记忆开放给 LLM
-        if "猫" in latest_msg or "宠物" in latest_msg:
-            pets = memory.get("pets", [])
-            if pets:
-                pet = pets[0]
-                breed = pet.get("breed") or pet.get("species") if isinstance(pet, dict) else pet
-                if breed:
-                    parts.append(f"养了一只{breed}")
-
-        interests = memory.get("interests", [])
-        if interests:
-            parts.append(f"喜欢{','.join(interests[:3])}")
-
-        return "；".join(parts) or "暂无"
-
-    @staticmethod
-    def humanize(text: str) -> str:
-        """过滤 AI 味机制"""
-        replacements = {
-            "我认为": "",
-            "我觉得": "",
-            "确实如此": "确实",
-            "非常": "挺",
-            "哈哈哈哈": "哈哈",
-            "真的非常": "真挺",
-        }
-        for k, v in replacements.items():
-            text = text.replace(k, v)
-        return text.strip()
+        return self._dedupe(candidates)[: plan.candidate_count]
 
     def _generate_with_llm(
         self,
@@ -140,62 +62,63 @@ class ReplyGenerator:
         relationship_state: Mapping[str, Any],
         memory: Mapping[str, Any],
     ) -> list[ReplyCandidate]:
-        """Generate replies using an LLM provider with optimized structure."""
-        latest_msg = self._latest_text(chat_history)
-        history_text = self._build_chat_history(chat_history)
-        memory_text = self._build_memory_summary(memory, latest_msg)
-        stage = relationship_state.get("stage", "L1")
-        stage_desc = self.STAGE_DESC.get(stage, "刚认识")
-
-        tactics_text = "\n".join(f"- {t}" for t in getattr(plan, "tactics", []))
-        avoid_text = "\n".join(f"- {a}" for a in getattr(plan, "avoid", []))
-
-        # 💡【防御战线 B：硬核负向 Prompt 约束】
-        prompt = f"""
-你是微信聊天高手。请直接给出 6 条纯文本候选回复。
-
-目标：
-{plan.objective}
-
-语气：
-{plan.tone}
-
-关系阶段：
-{stage} ({stage_desc})
-
-已知信息：
-{memory_text}
-
-战术指令：
-{tactics_text}
-
-必须避免（Avoid）：
-{avoid_text}
-- 严禁说教、自嗨、油腻、长篇大论。
-- 严禁使用“在教猫回复”、“跟猫学吊胃口”等任何关于猫或宠物的互联网过时烂梗（当前并未在聊宠物话题）。
-
-最近聊天：
-{history_text}
-
-要求：
-1. 输出6条候选回复，每行一条。
-2. 每条8~20字，长短交错，像真人发微信，多用口语。
-3. 不要带有任何解释、编号（如 1. 2. 3.）、Markdown 符号或标点前缀。
-
-直接输出回复内容。
-"""
-        response = self.llm.generate(prompt, temperature=0.8, max_tokens=350)
-        if not getattr(response, "success", False) or not response.content:
+        """Generate replies using an optional LLM provider."""
+        prompt = self._build_prompt(chat_history, plan, relationship_state, memory)
+        response = self.llm.generate(prompt, temperature=0.85, max_tokens=420)
+        if not getattr(response, "success", False) or not getattr(response, "content", ""):
             return []
 
-        candidates = []
+        candidates: list[ReplyCandidate] = []
         for line in response.content.splitlines():
-            clean_line = line.strip(" -1234567890.、*\"'")
-            if clean_line:
-                humanized_line = self.humanize(clean_line)
-                candidates.append(ReplyCandidate(text=humanized_line, source="llm"))
-                
+            text = self._clean_line(line)
+            if text:
+                candidates.append(ReplyCandidate(text=text, source="llm"))
         return candidates
+
+    def _build_prompt(
+        self,
+        chat_history: Sequence[Mapping[str, Any] | str],
+        plan: ReplyPlan,
+        relationship_state: Mapping[str, Any],
+        memory: Mapping[str, Any],
+    ) -> str:
+        """Build a generation prompt that favors natural human chat over polished advice."""
+        stage = str(relationship_state.get("stage", "L1"))
+        history = self._format_history(chat_history[-12:])
+        memory_text = self._memory_summary(memory, self._latest_text(chat_history))
+        tactics = "\n".join(f"- {item}" for item in plan.tactics[:4])
+        avoid = "\n".join(f"- {item}" for item in plan.avoid[:6])
+
+        return f"""
+你在帮人回微信，但最终效果必须像真人自己发的，不像情感导师，不像高情商教程，也不像客服。
+
+请直接生成 6 条候选回复，每条一行，只输出回复本身。
+
+关系阶段：{stage} - {self.STAGE_DESC.get(stage, "自然真诚")}
+当前方向：{plan.objective}
+整体感觉：{plan.tone}
+可用记忆：{memory_text or "无"}
+
+聊天记录：
+{history}
+
+只把这些当隐性参考，不要复述：
+{tactics}
+
+必须避免：
+{avoid}
+- 不要像咨询师：少用“先”“你可以”“你值得”“我理解你的情绪”。
+- 不要像教程：少用“接住”“提供情绪价值”“建立舒适感”这类词。
+- 不要像公关话术：少用完整闭环句和太工整的排比。
+- 不要油，不要端着，不要查岗，不要拿腔拿调。
+
+输出要求：
+1. 像真实微信，允许不完整句，允许口语，允许留白。
+2. 优先短句，长度尽量 4 到 20 个字，最多不要超过 26 个字。
+3. 候选要有区别，但都要像同一个人会说的话。
+4. 不要每句都很会聊，允许一点自然、随口、甚至轻微笨拙。
+5. 不要编号，不要解释。
+""".strip()
 
     @staticmethod
     def _generate_with_rules(
@@ -204,66 +127,219 @@ class ReplyGenerator:
         relationship_state: Mapping[str, Any],
         memory: Mapping[str, Any],
     ) -> list[ReplyCandidate]:
-        """Rule 兜底更自然，废除刻意和AI味的话术"""
+        """Generate varied deterministic fallback replies."""
         latest = ReplyGenerator._latest_text(chat_history)
         stage = str(relationship_state.get("stage", "L1"))
+        memory_hint = ReplyGenerator._memory_hint(memory, latest)
+        lower = latest.lower()
 
-        if any(k in latest for k in ["累", "烦", "崩溃", "压力", "加班"]):
+        if ReplyGenerator._is_greeting(lower):
+            base = ReplyGenerator._greeting_pool(stage)
+        elif "你在干嘛" in latest or "在干嘛" in latest:
+            base = ReplyGenerator._what_doing_pool(stage)
+        elif any(word in latest for word in ("累", "压力", "加班", "烦", "崩溃", "难受")):
             base = [
-                "今天确实够呛😂",
-                "先缓缓，别硬撑",
-                "这波听着都累",
-                "辛苦啦，快去瘫会儿",
-                "摸鱼缓一缓，别死磕",
-                "太窒息了，等会儿犒劳下自己"
+                "听着就挺耗你的，先缓一口气",
+                "辛苦了，今天别硬撑太久",
+                "这事确实烦，先让我站你这边",
+                "你先说，我听着呢",
+                "今天这波对你不太友好啊",
+                "抱抱，先把这口气顺下来",
             ]
-        elif stage in {"L4", "L5", "L6"}:
+        elif any(word in latest for word in ("猫", "狗", "宠物", "拆家")):
+            pet = memory_hint or "小家伙"
             base = [
-                "稀客啊😂",
-                "哟，终于出现了",
-                "刚好看到",
-                "在呢，刚刚还在想事情",
-                "收到，今天忙啥呢",
-                "出现得正是时候[旺柴]"
+                f"{pet}今天又开始营业了是吧",
+                "它这是把家当游乐场了吧",
+                "听着又气又想笑",
+                "你现在是铲屎官受害者现场吗",
+                "它拆家，你负责善后，太辛苦了",
+                "给我看看案发现场我判断一下",
+            ]
+        elif any(word in latest for word in ("出来", "见面", "吃饭", "电影", "周末", "有空")):
+            base = [
+                "可以啊，周末哪天",
+                "行啊，吃什么",
+                "这个我可以赴约",
+                "你都开口了，那就去",
+                "可以，地点你挑",
+                "那别光说说，定一下",
+            ]
+        elif any(word in latest for word in ("别的女生", "她是谁", "他是谁", "还聊", "和别人")):
+            base = [
+                "你这句怎么有点酸",
+                "没有，别乱想",
+                "你这是在吃味吗",
+                "真没有你想的那样",
+                "我主要还是在回你",
+                "这锅我先不认",
+            ]
+        elif any(word in latest for word in ("是不是", "你会不会", "你是不是", "在不在意")):
+            base = [
+                "你这是在试探我吗",
+                "在意啊，只是不想说太满",
+                "你问这么认真，我也认真点",
+                "我没敷衍你，这个你放心",
+                "你想听真话还是漂亮话",
+                "这题答不好要扣分是吧",
+            ]
+        elif plan.emotional_need == "空间感和低压力":
+            base = [
+                "行，那你先忙，不吵你",
+                "没事，你方便了再回我",
+                "我不催你，先把你的事处理好",
+                "收到，我先安静一会儿",
+                "好，你先缓缓",
+                "不用急着回，我在",
             ]
         else:
-            base = [
-                "我在😂",
-                "怎么啦",
-                "突然找我有事？",
-                "刚看到，你说",
-                "咋啦，今天没加班？",
-                "怎么突然想起抓我了"
-            ]
+            base = ReplyGenerator._general_pool(stage)
 
+        offset = ReplyGenerator._stable_offset(latest + stage)
+        rotated = base[offset:] + base[:offset]
+        return [ReplyCandidate(text=text, source="rules", metadata={"objective": plan.objective}) for text in rotated]
+
+    @staticmethod
+    def _greeting_pool(stage: str) -> list[str]:
+        """Return greeting replies by stage."""
+        if stage in {"L4", "L5", "L6"}:
+            return [
+                "你来得刚好",
+                "终于出现了啊",
+                "嗨，今天想我没",
+                "刚好想找你来着",
+                "你这一声我收到了",
+                "在呢，今天过得怎么样",
+            ]
         return [
-            ReplyCandidate(text=text, source="rules", metadata={"objective": plan.objective}) 
-            for text in base[: plan.candidate_count]
+            "你好呀",
+            "嗨，刚看到",
+            "在呢，你好",
+            "你好，今天怎么样",
+            "来了，怎么说",
+            "嗨，找我聊会儿吗",
         ]
 
-    def _rank_candidates(self, candidates: list[ReplyCandidate], latest_msg: str) -> list[ReplyCandidate]:
-        """💡【防御战线 C 的具体实现】"""
-        # 如果对方没主动聊猫，任何带“猫”的生成结果直接乱棍打死
-        if "猫" not in latest_msg and "宠物" not in latest_msg:
-            filtered = [c for c in candidates if "猫" not in c.text and "喵" not in c.text]
-            
-            # 如果被洗掉后条数不够了，用安全的兜底话术无缝补齐，绝对不破坏 6 条候选的死命令
-            backup_pool = [
-                "刚忙完，刚才整个人都麻了。",
-                "怎么啦，突然召唤我？",
-                "刚看到，今天一天都在对线。",
-                "哈哈，你这句话差点没把我送走。",
-                "在呢在呢，刚空下来。",
-                "哟，今儿个刮的什么风。"
+    @staticmethod
+    def _what_doing_pool(stage: str) -> list[str]:
+        """Return replies for 'what are you doing' by stage."""
+        if stage in {"L4", "L5", "L6"}:
+            return [
+                "在想怎么回你才不明显",
+                "刚忙完，正好等到你",
+                "在被你这句话叫出来",
+                "本来在忙，现在注意力跑你那了",
+                "在想你怎么突然查岗",
+                "在呢，你是不是想我了",
             ]
-            idx = 0
-            while len(filtered) < 6 and idx < len(backup_pool):
-                if not any(b in [f.text for f in filtered] for b in [backup_pool[idx]]):
-                    filtered.append(ReplyCandidate(text=backup_pool[idx], source="filter_fallback"))
-                idx += 1
-            return filtered
-            
-        return candidates
+        if stage == "L3":
+            return [
+                "刚忙完，准备歇会儿",
+                "在处理点事，你呢",
+                "刚看手机，你那边呢",
+                "在摸鱼，你别举报我",
+                "刚停下来，怎么啦",
+                "在呢，说说你那边",
+            ]
+        return [
+            "刚忙完，准备歇会儿",
+            "在处理点事，你呢",
+            "刚看到消息，怎么啦",
+            "在呢，你那边忙完了吗",
+            "刚停下来，你呢",
+            "没干嘛，正好可以聊两句",
+        ]
+
+    @staticmethod
+    def _general_pool(stage: str) -> list[str]:
+        """Return general replies by stage."""
+        if stage in {"L4", "L5", "L6"}:
+            return [
+                "你这句还挺会挑时候",
+                "你怎么突然冒出来了",
+                "这话我得想两秒",
+                "行，你继续",
+                "你这样说我会多想",
+                "那我听你往下说",
+            ]
+        return [
+            "然后呢",
+            "你继续",
+            "有点意思",
+            "那后来呢",
+            "你这句展开说说",
+            "原来是这样",
+        ]
+
+    @staticmethod
+    def _is_greeting(text: str) -> bool:
+        """Return whether latest text is a greeting."""
+        normalized = re.sub(r"\s+", "", text.lower())
+        return normalized in {"你好", "nihao", "hello", "hi", "嗨", "哈喽"}
+
+    @staticmethod
+    def _format_history(chat_history: Sequence[Mapping[str, Any] | str]) -> str:
+        """Format recent chat history for prompting."""
+        lines: list[str] = []
+        for item in chat_history:
+            if isinstance(item, str):
+                lines.append(f"她：{item}")
+            else:
+                role = str(item.get("role", "user"))
+                speaker = "我" if role in {"assistant", "boy", "me"} else "她"
+                content = str(item.get("content", item.get("text", item.get("message", ""))))
+                lines.append(f"{speaker}：{content}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _memory_summary(memory: Mapping[str, Any], latest: str) -> str:
+        """Summarize memory only when it is contextually useful."""
+        parts: list[str] = []
+        pets = memory.get("pets", [])
+        if pets and any(word in latest for word in ("猫", "狗", "宠物", "拆家")) and isinstance(pets[0], Mapping):
+            pet = pets[0]
+            parts.append(f"她养了{pet.get('breed') or pet.get('species') or '宠物'}")
+        interests = memory.get("interests", [])
+        if interests:
+            parts.append("兴趣：" + "、".join(str(item) for item in interests[:2]))
+        return "；".join(parts) if parts else "无"
+
+    @staticmethod
+    def _memory_hint(memory: Mapping[str, Any], latest: str) -> str:
+        """Return a short memory hint for rule replies."""
+        pets = memory.get("pets", [])
+        if pets and any(word in latest for word in ("猫", "狗", "宠物", "拆家")) and isinstance(pets[0], Mapping):
+            return str(pets[0].get("breed") or pets[0].get("species") or "")
+        return ""
+
+    @staticmethod
+    def _clean_line(line: str) -> str:
+        """Clean one LLM output line."""
+        text = re.sub(r"^\s*[-*\d.、）)]+\s*", "", line).strip()
+        text = text.strip("\"'“”")
+        text = text.replace("您", "你")
+        text = re.sub(r"\s+", " ", text)
+        return text[:48].rstrip("，,。 ")
+
+    @staticmethod
+    def _dedupe(candidates: Sequence[ReplyCandidate]) -> list[ReplyCandidate]:
+        """Deduplicate candidates by normalized text."""
+        seen: set[str] = set()
+        result: list[ReplyCandidate] = []
+        for candidate in candidates:
+            text = candidate.text.strip()
+            key = re.sub(r"\W+", "", text.lower())
+            if not text or key in seen:
+                continue
+            seen.add(key)
+            result.append(candidate.model_copy(update={"text": text}))
+        return result
+
+    @staticmethod
+    def _stable_offset(value: str) -> int:
+        """Return a deterministic rotation offset for fallback variety."""
+        digest = hashlib.sha1(value.encode("utf-8")).hexdigest()
+        return int(digest[:2], 16) % 6
 
     @staticmethod
     def _latest_text(chat_history: Sequence[Mapping[str, Any] | str]) -> str:
@@ -274,3 +350,14 @@ class ReplyGenerator:
         if isinstance(latest, str):
             return latest
         return str(latest.get("content", latest.get("text", latest.get("message", ""))))
+
+
+def _demo() -> None:
+    """Run a small module smoke test."""
+    plan = ReplyPlan(objective="自然回复", tone="轻松")
+    replies = ReplyGenerator().generate(["你在干嘛"], plan, {"stage": "L4"}, {})
+    print([reply.text for reply in replies])
+
+
+if __name__ == "__main__":
+    _demo()

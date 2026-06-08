@@ -5,96 +5,123 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from emotion_agent import ReplyPipeline
-from emotion_agent.providers import DeepSeekProvider
+from emotion_agent.providers import ClaudeProvider, DeepSeekProvider, GeminiProvider, OpenAIProvider
+from emotion_agent.session_store import SessionStore
 
 
 HOST = "127.0.0.1"
-PORT = 8766
+PORT = int(os.getenv("EMOTION_AGENT_PORT", "8765"))
 STATIC_DIR = Path(__file__).parent / "web"
+DEFAULT_PROVIDER = os.getenv("EMOTION_AGENT_PROVIDER", "deepseek").strip().lower()
 
 
-def _load_dotenv() -> None:
-    """Load environment variables from .env file."""
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-        print(f"Loaded .env from: {env_path}")
-    else:
-        print(f".env not found at: {env_path}")
+def create_llm_provider() -> Any:
+    """Create the configured LLM provider; DeepSeek is the restored default."""
+    providers = {
+        "deepseek": DeepSeekProvider,
+        "openai": OpenAIProvider,
+        "claude": ClaudeProvider,
+        "gemini": GeminiProvider,
+    }
+    provider_cls = providers.get(DEFAULT_PROVIDER, DeepSeekProvider)
+    return provider_cls()
 
 
-_load_dotenv()
-print(f"DEEPSEEK_API_KEY loaded: {'DEEPSEEK_API_KEY' in os.environ}")
+def safe_user_id(value: str) -> str:
+    """Return a filesystem-safe user id for local session memory files."""
+    text = value.strip() or "default_girl"
+    safe = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fa5]+", "_", text)
+    return safe[:48] or "default_girl"
 
 
 class ChatApplication:
-    """Thread-safe holder for the long-lived reply pipeline."""
+    """Thread-safe holder for per-session reply pipelines and chat histories."""
 
     def __init__(self) -> None:
         """Create the chat application state."""
-        llm = DeepSeekProvider()
-        print(f"DeepSeek config: api_key={llm.config.api_key}, api_key_env={llm.config.api_key_env}, base_url={llm.config.base_url}")
-        print(f"Env DEEPSEEK_API_KEY: {os.environ.get('DEEPSEEK_API_KEY', 'NOT FOUND')[:10]}...")
-        try:
-            key = llm._api_key()
-            print(f"Resolved API key: {key[:10]}...")
-        except Exception as e:
-            print(f"Failed to resolve API key: {e}")
-        
-        # Test LLM connection
-        print("Testing LLM connection...")
-        try:
-            test_response = llm.generate("Hello")
-            print(f"LLM test success: {test_response.success}, content: {test_response.content[:50]}")
-        except Exception as e:
-            print(f"LLM test failed: {e}")
-            
-        self.pipeline = ReplyPipeline(llm=llm, memory_path="memory.json")
-        self.chat_history: list[dict[str, str]] = []
+        self.llm = create_llm_provider()
+        self.pipelines: dict[str, ReplyPipeline] = {}
+        self.chat_histories: dict[str, list[dict[str, str]]] = {}
+        self.session_store = SessionStore()
         self.lock = threading.Lock()
 
-    def chat(self, message: str) -> dict[str, Any]:
+    def chat(self, message: str, user_id: str = "default_girl") -> dict[str, Any]:
         """Append a user message, run the pipeline, and append the AI reply."""
         clean_message = message.strip()
         if not clean_message:
             raise ValueError("Message is empty")
 
         with self.lock:
-            self.chat_history.append({"role": "user", "content": clean_message})
-            print(f"Chat history: {self.chat_history[-20:]}")
-            result = self.pipeline.run(self.chat_history[-20:])
-            print(f"Pipeline result final_reply: {result.final_reply}")
-            print(f"Pipeline result candidates: {[c.text for c in result.candidates]}")
+            session_id = safe_user_id(user_id)
+            pipeline = self._pipeline_for(session_id)
+            chat_history = self.chat_histories.setdefault(session_id, [])
+            chat_history.append({"role": "user", "content": clean_message})
+            result = pipeline.run(chat_history[-20:])
             reply = result.final_reply.strip() or "我在，你慢慢说"
-            self.chat_history.append({"role": "assistant", "content": reply})
+            chat_history.append({"role": "assistant", "content": reply})
+            self.session_store.save_history(session_id, chat_history)
+            self.session_store.save_state(session_id, result.relationship_state)
             return {
                 "reply": reply,
+                "provider": self.llm.provider_name.value,
+                "model": self.llm.config.model,
+                "user_id": session_id,
                 "analysis": result.analysis.model_dump(),
                 "relationship_state": result.relationship_state,
                 "memory": result.memory,
                 "risk": result.risk.model_dump(),
                 "plan": result.plan.model_dump(),
+                "profile": result.plan.behavior_profile.model_dump(),
                 "ranked": result.ranked.model_dump(),
                 "candidates": [candidate.model_dump() for candidate in result.candidates],
-                "history": list(self.chat_history),
+                "history": list(chat_history),
             }
 
-    def reset(self) -> dict[str, Any]:
+    def reset(self, user_id: str = "default_girl") -> dict[str, Any]:
         """Clear in-memory chat history while preserving saved long-term memory."""
         with self.lock:
-            self.chat_history.clear()
-            return {"ok": True, "history": []}
+            session_id = safe_user_id(user_id)
+            self.chat_histories[session_id] = []
+            self.session_store.clear_history(session_id)
+            return {"ok": True, "user_id": session_id, "history": []}
+
+    def status(self, user_id: str = "default_girl") -> dict[str, Any]:
+        """Return current state for one local chat session."""
+        with self.lock:
+            session_id = safe_user_id(user_id)
+            pipeline = self._pipeline_for(session_id)
+            return {
+                "provider": self.llm.provider_name.value,
+                "model": self.llm.config.model,
+                "user_id": session_id,
+                "relationship_state": pipeline.relationship_machine.export_state(),
+                "memory": pipeline.memory_manager.memory.user.summary(),
+                "risk": {"risk_level": "low"},
+                "analysis": {"intent": "-"},
+                "profile": {},
+                "history": list(self.chat_histories.setdefault(session_id, [])),
+                "candidates": [],
+            }
+
+    def _pipeline_for(self, user_id: str) -> ReplyPipeline:
+        """Return or create the pipeline for one session."""
+        if user_id not in self.pipelines:
+            bundle = self.session_store.load(user_id)
+            self.chat_histories[user_id] = list(bundle.chat_history)
+            self.pipelines[user_id] = ReplyPipeline(
+                llm=self.llm,
+                memory_path=bundle.memory_path,
+                relationship_machine=bundle.relationship_machine,
+            )
+        return self.pipelines[user_id]
 
 
 APP = ChatApplication()
@@ -108,6 +135,12 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Serve static assets."""
         parsed = urlparse(self.path)
+        if parsed.path == "/api/session_status":
+            query = parse_qs(parsed.query)
+            user_id = query.get("user_id", ["default_girl"])[0]
+            self._send_json(APP.status(user_id))
+            return
+
         target = "index.html" if parsed.path in {"", "/"} else parsed.path.lstrip("/")
         path = (STATIC_DIR / target).resolve()
         if not str(path).startswith(str(STATIC_DIR.resolve())) or not path.exists() or not path.is_file():
@@ -124,24 +157,23 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle JSON API requests."""
-        print(f"Received POST request: {self.path}")
         try:
             if self.path == "/api/chat":
                 payload = self._read_json()
-                print(f"Chat payload: {payload}")
-                response = APP.chat(str(payload.get("message", "")))
-                print(f"Chat response: {response['reply'][:50]}...")
+                response = APP.chat(
+                    str(payload.get("message", "")),
+                    str(payload.get("user_id", "default_girl")),
+                )
                 self._send_json(response)
                 return
             if self.path == "/api/reset":
-                self._send_json(APP.reset())
+                payload = self._read_json()
+                self._send_json(APP.reset(str(payload.get("user_id", "default_girl"))))
                 return
             self._send_json({"error": "not_found"}, status=404)
         except ValueError as exc:
-            print(f"ValueError: {exc}")
             self._send_json({"error": str(exc)}, status=400)
         except Exception as exc:
-            print(f"Exception: {exc}")
             self._send_json({"error": "server_error", "detail": str(exc)}, status=500)
 
     def log_message(self, format: str, *args: Any) -> None:

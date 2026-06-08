@@ -1,7 +1,7 @@
 providers:
   openai:
     api_key_env: OPENAI_API_KEY
-    base_url: https://api.openai.com/v1/chat/completions
+    base_url: https://api.freemodel.dev/v1/chat/completions
     model: gpt-4o-mini
     temperature: 0.7
     max_tokens: 1024

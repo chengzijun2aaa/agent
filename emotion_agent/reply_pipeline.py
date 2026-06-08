@@ -54,6 +54,7 @@ class ReplyPipeline:
         self.reply_generator = ReplyGenerator(llm=llm)
         self.humanizer = Humanizer()
         self.reply_ranker = ReplyRanker()
+        self.llm = llm
 
     def run(self, chat_history: Sequence[str | Mapping[str, Any]]) -> ReplyPipelineResult:
         """Run the full reply pipeline and return the final reply plus diagnostics."""
@@ -66,7 +67,7 @@ class ReplyPipeline:
         plan = self.strategy_planner.plan(analysis, relationship_state, memory, risk)
         candidates = self.reply_generator.generate(chat_history, plan, relationship_state, memory)
         humanized = self.humanizer.humanize(candidates)
-        ranked = self.reply_ranker.rank(humanized, risk, relationship_state)
+        ranked = self.reply_ranker.rank(humanized, risk, relationship_state, chat_history)
         _ = relationship_state_model
         return ReplyPipelineResult(
             final_reply=ranked.candidate.text,

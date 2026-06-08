@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "user": {
+    "name": null,
+    "age": null,
+    "occupation": null,
+    "city": null,
+    "pets": [],
+    "interests": [],
+    "birthday": null,
+    "dietary_habits": [],
+    "travel_experiences": [],
+    "important_events": []
+  },
+  "created_at": "2026-06-08T04:13:27.220772Z",
+  "updated_at": "2026-06-08T05:32:57.471111Z"
+}

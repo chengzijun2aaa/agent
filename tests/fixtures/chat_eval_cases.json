@@ -1,0 +1,60 @@
+[
+  {
+    "name": "greeting_cold_start",
+    "history": [
+      {"role": "user", "content": "你好"}
+    ],
+    "expected_intent": "分享生活",
+    "expected_stage": "L1",
+    "max_favorability": 20,
+    "forbidden_phrases": ["我在，慢慢说", "怎么突然想起问我这个"],
+    "notes": "开场白不要太咨询师，也不要装熟。"
+  },
+  {
+    "name": "work_stress_support",
+    "history": [
+      {"role": "user", "content": "今天加班到现在，老板还一直催，真的烦死了"}
+    ],
+    "expected_intent": "工作压力",
+    "expected_risk": "low",
+    "max_favorability": 35,
+    "forbidden_phrases": ["你应该", "别想太多"],
+    "notes": "先共情，别上来给大道理。"
+  },
+  {
+    "name": "pet_memory_merge",
+    "history": [
+      {"role": "user", "content": "我养了一只布偶猫"},
+      {"role": "assistant", "content": "布偶猫一般都挺黏人"},
+      {"role": "user", "content": "它今天又拆家了"}
+    ],
+    "expected_memory_contains": ["布偶"],
+    "max_favorability": 45,
+    "forbidden_phrases": ["宠物话题很有趣"],
+    "notes": "要能把前文的布偶猫记住。"
+  },
+  {
+    "name": "invite_after_familiarity",
+    "history": [
+      {"role": "user", "content": "最近老加班"},
+      {"role": "assistant", "content": "那你这阵子挺累的"},
+      {"role": "user", "content": "周末要不要一起吃个饭"}
+    ],
+    "expected_intent": "邀约",
+    "expected_stage": "L2",
+    "min_favorability": 15,
+    "max_favorability": 55,
+    "forbidden_phrases": ["我会认真分析", "让我们"],
+    "notes": "不要太官腔，回复里应该像微信。"
+  },
+  {
+    "name": "jealousy_signal",
+    "history": [
+      {"role": "user", "content": "你最近是不是和别的女生聊得挺开心啊"}
+    ],
+    "expected_intent": "吃醋",
+    "max_favorability": 45,
+    "forbidden_phrases": ["从你的描述来看", "你的情绪我理解"],
+    "notes": "别变成心理咨询腔。"
+  }
+]

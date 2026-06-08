@@ -15,6 +15,7 @@ const messages = document.querySelector("#messages");
 const stageEl = document.querySelector("#stage");
 const riskEl = document.querySelector("#risk");
 const scoreEl = document.querySelector("#score");
+const favorabilityDetailEl = document.querySelector("#favorability-detail");
 const intentEl = document.querySelector("#intent");
 const memoryEl = document.querySelector("#memory");
 const candidatesEl = document.querySelector("#candidates");
@@ -43,8 +44,16 @@ function renderState(data) {
   }
 
   if (scoreEl) {
-    const totalScore = data.ranked?.total_score || profile.warmth;
-    scoreEl.textContent = totalScore !== undefined ? Number(totalScore).toFixed(1) : "-";
+    const favorabilityScore = relationship.favorability_score;
+    const fallbackScore = data.ranked?.total_score || profile.warmth;
+    const displayScore = favorabilityScore !== undefined ? favorabilityScore : fallbackScore;
+    scoreEl.textContent = displayScore !== undefined ? `${Number(displayScore).toFixed(1)}/100` : "-";
+  }
+
+  if (favorabilityDetailEl) {
+    const label = relationship.favorability_label || "陌生观望";
+    const boundary = relationship.intimacy_boundary || "不要推进身体接触。";
+    favorabilityDetailEl.textContent = `${label}｜${boundary}`;
   }
 
   if (intentEl) {

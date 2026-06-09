@@ -17,6 +17,7 @@ class ReplyScore(BaseModel):
     wechat_feel: float = Field(ge=0.0, le=100.0)     # 微信自然度
     no_simping: float = Field(ge=0.0, le=100.0)      # 不讨好 / 不舔
     no_greasy: float = Field(ge=0.0, le=100.0)       # 不油腻
+    information_entropy: float = Field(default=0.0, ge=0.0, le=100.0)  # 短句信息量
     advance_speed: float = Field(ge=0.0, le=100.0)   # 推进节奏是否合适
     pressure: float = Field(ge=0.0, le=100.0)        # 压迫感（独立作为减分惩罚项）
     emotional_value: float = Field(default=0.0, ge=0.0, le=100.0)
@@ -26,18 +27,66 @@ class ReplyScore(BaseModel):
 
 
 class ReplyRanker:
-    """真实男性回复排序器 - PUA高价值框架筛选（高性能重构版）"""
+    """Rank replies by naturalness, usefulness, comfort, and pacing."""
 
     # 1. 抽离权重配置，方便后续热更新或微调
     WEIGHTS = {
-        "naturalness": 0.22,
-        "wechat_feel": 0.18,
-        "no_simping": 0.22,
-        "no_greasy": 0.18,
-        "advance_speed": 0.12,
+        "naturalness": 0.18,
+        "wechat_feel": 0.14,
+        "information_entropy": 0.18,
+        "no_simping": 0.18,
+        "no_greasy": 0.15,
+        "advance_speed": 0.10,
         "emotional_value": 0.05,
-        "profile_fit": 0.03,
+        "profile_fit": 0.04,
         "pressure_penalty": 0.15,
+    }
+
+    PERSONALITY_MATRICES = {
+        "boundary_sensitive": {
+            "naturalness": 0.17,
+            "wechat_feel": 0.14,
+            "information_entropy": 0.16,
+            "no_simping": 0.16,
+            "no_greasy": 0.14,
+            "advance_speed": 0.08,
+            "emotional_value": 0.05,
+            "profile_fit": 0.05,
+            "pressure_penalty": 0.24,
+        },
+        "reassurance_need": {
+            "naturalness": 0.16,
+            "wechat_feel": 0.12,
+            "information_entropy": 0.16,
+            "no_simping": 0.14,
+            "no_greasy": 0.13,
+            "advance_speed": 0.08,
+            "emotional_value": 0.14,
+            "profile_fit": 0.05,
+            "pressure_penalty": 0.18,
+        },
+        "playful": {
+            "naturalness": 0.20,
+            "wechat_feel": 0.16,
+            "information_entropy": 0.18,
+            "no_simping": 0.16,
+            "no_greasy": 0.15,
+            "advance_speed": 0.10,
+            "emotional_value": 0.05,
+            "profile_fit": 0.05,
+            "pressure_penalty": 0.14,
+        },
+        "clear": {
+            "naturalness": 0.18,
+            "wechat_feel": 0.13,
+            "information_entropy": 0.17,
+            "no_simping": 0.16,
+            "no_greasy": 0.14,
+            "advance_speed": 0.14,
+            "emotional_value": 0.05,
+            "profile_fit": 0.05,
+            "pressure_penalty": 0.16,
+        },
     }
 
     # 2. 原始词库定义
@@ -116,16 +165,18 @@ class ReplyRanker:
         wechat_feel = self._wechat_feel_score(text, length)
         no_simping = self._no_simping_score(text)
         no_greasy = self._no_greasy_score(text)
+        information_entropy = self._information_entropy_score(text, chat_history)
         advance_speed = self._advance_speed_score(text, relationship_state, profile, chat_history)
         pressure = self._pressure_score(text, profile)
         emotional_value = self._emotional_value_score(text, chat_history)
         profile_fit = self._profile_fit_score(text, profile)
 
         # 4. 采用动态权重池计算，结构更清晰
-        w = self.WEIGHTS
+        w = self._weights_for_profile(profile)
         total = (
             naturalness * w["naturalness"] +
             wechat_feel * w["wechat_feel"] +
+            information_entropy * w["information_entropy"] +
             no_simping * w["no_simping"] +
             no_greasy * w["no_greasy"] +
             advance_speed * w["advance_speed"] +
@@ -133,9 +184,13 @@ class ReplyRanker:
             profile_fit * w["profile_fit"] -
             (pressure * w["pressure_penalty"])  # 强压迫感作为纯扣分项
         )
+        if information_entropy < 25:
+            total -= 18.0
+        if naturalness < 50 and information_entropy < 40:
+            total -= 12.0
 
         reason = (
-            f"nat={naturalness:.1f} | wx={wechat_feel:.1f} | nosimp={no_simping:.1f} "
+            f"nat={naturalness:.1f} | wx={wechat_feel:.1f} | info={information_entropy:.1f} | nosimp={no_simping:.1f} "
             f"| nogreasy={no_greasy:.1f} | advance={advance_speed:.1f} | press_penalty=-{pressure * w['pressure_penalty']:.1f}"
         )
 
@@ -145,6 +200,7 @@ class ReplyRanker:
             wechat_feel=wechat_feel,
             no_simping=no_simping,
             no_greasy=no_greasy,
+            information_entropy=information_entropy,
             advance_speed=advance_speed,
             pressure=pressure,
             emotional_value=emotional_value,
@@ -154,17 +210,23 @@ class ReplyRanker:
         )
 
     def _natural_male_score(self, text: str) -> float:
-        """真实高认知男性口吻（微信精炼感）"""
+        """Natural short-message tone without rewarding empty replies."""
         score = 85.0
-        if len(text) > 40: 
-            score -= 20.0  # 字数过长显得需求感爆棚
+        length = len(text)
+
+        if length < 3:
+            score -= 30.0
+        if length > 40:
+            score -= 20.0
+        if text in ("行吧", "好吧", "不知道", "哈哈哈", "我都行", "嗯", "哦", "行", "好", "收到"):
+            score -= 25.0
         if "哈哈哈" in text or "哈组合" in text or "对对对" in text:
-            score -= 10.0  # 降低无意义的情绪附和
+            score -= 10.0
         
         # 语气词合理加分
         tokens = ("…", "嗯", "哈", "行", "噢")
         bonus = sum(4.0 for t in tokens if t in text)
-        return max(30.0, min(100.0, score + min(12.0, bonus)))
+        return max(10.0, min(100.0, score + min(8.0, bonus)))
 
     def _wechat_feel_score(self, text: str, length: int) -> float:
         """微信原生没有密集标点"""
@@ -177,6 +239,41 @@ class ReplyRanker:
             score -= (punc_count * 6.0)
             
         return max(30.0, min(100.0, score))
+
+    def _information_entropy_score(self, text: str, chat_history: Any) -> float:
+        """Reward short replies that still carry attitude, callback, or emotion."""
+        compact = re.sub(r"\s+", "", text)
+        latest = self._latest_text(chat_history)
+        score = 62.0
+
+        if len(compact) < 3:
+            score -= 45.0
+        if compact in {"嗯", "哦", "好", "行", "收到", "哈哈", "呵呵", "还好吧", "不知道", "随便"}:
+            score -= 45.0
+        if compact in {"嗯呢", "好滴", "行吧", "好吧"}:
+            score -= 28.0
+
+        attitude_markers = (
+            "先", "别", "可以", "放心", "站你", "听着", "接住", "有点", "可爱",
+            "酸", "记你", "继续", "怎么说", "哪天", "时间", "地方", "舒服", "不急"
+        )
+        if any(marker in text for marker in attitude_markers):
+            score += 22.0
+
+        latest_keywords = [
+            word
+            for word in ("累", "烦", "猫", "狗", "周末", "见面", "吃饭", "想你", "抱抱", "压力", "酸", "忙")
+            if word in latest
+        ]
+        if latest_keywords and any(word in text for word in latest_keywords):
+            score += 16.0
+
+        if 4 <= len(compact) <= 18:
+            score += 10.0
+        if len(set(compact)) <= 2 and len(compact) >= 3:
+            score -= 18.0
+
+        return max(0.0, min(100.0, score))
 
     def _no_simping_score(self, text: str) -> float:
         """不舔狗框架 - 使用预编译正则大幅提升检索速度"""
@@ -283,6 +380,24 @@ class ReplyRanker:
             if self._regex_high_boundary.search(text):
                 score -= 30.0
         return max(0.0, min(100.0, score))
+
+    def _weights_for_profile(self, profile: Mapping[str, Any]) -> Mapping[str, float]:
+        """Select a scoring matrix from the current dynamic profile."""
+        if not profile:
+            return self.WEIGHTS
+        boundary = float(profile.get("boundary_sensitivity", 50) or 50)
+        reassurance = float(profile.get("reassurance_need", 50) or 50)
+        playfulness = float(profile.get("playfulness", 50) or 50)
+        leadership = float(profile.get("leadership_preference", 50) or 50)
+        if boundary >= 70:
+            return self.PERSONALITY_MATRICES["boundary_sensitive"]
+        if reassurance >= 68:
+            return self.PERSONALITY_MATRICES["reassurance_need"]
+        if playfulness >= 65:
+            return self.PERSONALITY_MATRICES["playful"]
+        if leadership >= 65:
+            return self.PERSONALITY_MATRICES["clear"]
+        return self.WEIGHTS
 
     @staticmethod
     def _profile(memory: Mapping[str, Any] | None) -> dict[str, Any]:

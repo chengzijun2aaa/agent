@@ -1,4 +1,4 @@
-"""Reply Generator - short, natural WeChat-style replies - PUA高价值框架版"""
+"""Reply Generator - short, natural WeChat-style replies."""
 
 from __future__ import annotations
 
@@ -54,7 +54,10 @@ class ReplyGenerator:
 
     def _generate_with_llm(self, chat_history, plan: ReplyPlan, relationship_state, memory) -> list[ReplyCandidate]:
         prompt = self._build_prompt(chat_history, plan, relationship_state, memory)
-        response = self.llm.generate(prompt, temperature=0.92, max_tokens=480)
+        try:
+            response = self.llm.generate(prompt, temperature=0.8, max_tokens=480, presence_penalty=0.55)
+        except TypeError:
+            response = self.llm.generate(prompt, temperature=0.8, max_tokens=480)
         
         if not getattr(response, "success", False) or not response.content:
             return []
@@ -81,18 +84,23 @@ class ReplyGenerator:
             else "如果她已经主动释放见面窗口，可以自然落到具体安排，但仍然保持低压力。"
         )
 
-        # 核心优化：引入极致的微信语感排斥策略，强行压制 LLM 吐出完美的“教科书式句子”
+        expression_intent = self._expression_intent(self._latest_text(chat_history), action)
+        personality = self._personality_package(profile)
+
+        # 核心优化：让模型先围绕表达动机和动态性格包生成，再输出自然短句。
         return f"""
-你是一个真实、松弛、有核心框架的成熟男人，正在微信和女生聊天。
+你是一个真实、松弛、边界感稳定的成年人，正在微信和女生聊天。
 
 【微信打字核心规范】：
-1. 极致简短：字数控制在 4-15 字以内。像单手拿手机随手秒回的。
+1. 简短但有信息：字数控制在 4-18 字以内。短句必须带态度、接梗或情绪承接，不能只有“嗯”“行”“好吧”。
 2. 杜绝书面标点：绝不输出标准的句号（。）、叹号（！）、逗号（，）。
 3. 允许微信特色断句：长句用空格代替逗号。允许在末尾带个轻松的语气问号（？），或者少量微信自带表情（如 🌚, 😅, 😎）。
-4. 绝不迎合、不自证、说教或无脑高情商安慰。先接住话，再给态度。
-5. 保持高价值雄性主导权：节奏稳、语气坏、姿态高、情绪内核极度稳定。
+4. 绝不说教、连环追问、刻意迎合或自证。先接住话，再给态度。
+5. 保持低压力和高舒适度：平等、自然、松弛、有边界。
 - {invite_rule}
 
+表达动机：{expression_intent}
+动态性格包：{personality}
 当前行动类型：{action}
 核心目标：{plan.objective}
 语气方向：{plan.tone}
@@ -104,7 +112,8 @@ class ReplyGenerator:
 聊天记录（最近的）：
 {history}
 
-直接生成 6-8 条最符合上述规范的候选回复，每条独立成行。只输出纯文本，坚决不要编号，不要引号。
+先在心里判断 Intent，再按动态性格包改写成不同句式。直接生成 6-8 条候选回复，每条独立成行。
+只输出纯文本，坚决不要编号，不要引号，不要复读同一种句型。
 """.strip()
 
     @staticmethod
@@ -114,38 +123,26 @@ class ReplyGenerator:
         profile = ReplyGenerator._profile(memory)
         clear_lead = int(profile.get("leadership_preference", 50) or 50) >= 65
 
-        normalized_latest = re.sub(r"\s+", "", latest)
-        if normalized_latest in {"你好", "hi", "hello", "哈喽", "在吗"}:
-            base = ["刚看到", "在呢 怎么啦", "嗨 今天怎么样", "来了 找我呀", "刚忙完 你呢", "嗯 在的"]
-        elif any(w in latest for w in ("猫", "狗", "宠物", "拆家", "布偶")):
-            pet_label = ReplyGenerator._pet_label(memory)
-            base = [
-                f"{pet_label}今天又营业了是吧" if pet_label else "它今天又营业了是吧",
-                "听着又气又想笑",
-                "你现在是案发现场负责人",
-                "它拆家 你善后",
-                "给我看看现场",
-                "这小家伙挺会折腾"
-            ]
-        # Bug修复：同步 StrategyPlanner 的真实 action_type，将 "接情绪推进" 修正为 "接情绪"
-        elif action == "接情绪" or any(w in latest for w in ("累", "烦", "难受", "委屈", "压力", "想哭")):
-            base = ["先喘口气", "嗯 我听着呢", "别硬扛", "这波确实挺烦的", "你先说 怎么了", "行 先无条件站你这边"]
-            if clear_lead:
-                base = ["先别硬扛 把最烦那段丢给我", *base]
-        elif action in ("轻暧昧拉扯", "暧昧拉扯", "轻暧昧") or any(w in latest for w in ("想你", "抱抱", "坏", "色")):
-            base = ["你这句有点意思", "别只丢半句 展开说说", "这语气有点可爱", "你这样我会惦记一下", "行 继续保持", "哼 又开始暗戳戳撩我"]
-        elif action == "邀约推进" or any(w in latest for w in ("见面", "周末", "有空", "一起", "吃饭")):
-            base = ["可以 周末哪天", "行 我来定地方", "那就定时间", "可以 你定时间我来安排", "别光说 找天落地", "行 先约个轻松的"]
-        elif action == "框架应对" or any(w in latest for w in ("别的女生", "她是谁", "吃醋")):
-            base = ["你这句有点酸啊", "没有你想的那样", "对我放心点", "这锅我可不背", "你要听真话还是好听的", "你这是在暗中试探我？"]
-        elif action == "后撤":
-            base = ["行 你先忙", "嗯呢", "好滴", "收到", "那你先忙着"]
-        else:
-            base = ["然后呢", "你继续说", "这句有点意思", "嗯？怎么说", "刚看到 怎么了", "行 听你的安排"]
+        expression_intent = ReplyGenerator._expression_intent(latest, action)
+        personality = ReplyGenerator._personality_package(profile)
+        base = ReplyGenerator._intent_variants(
+            expression_intent,
+            latest=latest,
+            memory=memory,
+            clear_lead=clear_lead,
+        )
+        base = ReplyGenerator._season_variants(base, personality, profile)
 
-        offset = ReplyGenerator._stable_offset(latest)
+        offset = ReplyGenerator._stable_offset(f"{latest}|{action}|{personality}")
         rotated = base[offset:] + base[:offset]
-        return [ReplyCandidate(text=t, source="rules") for t in rotated]
+        return [
+            ReplyCandidate(
+                text=t,
+                source="rules",
+                metadata={"expression_intent": expression_intent, "personality": personality},
+            )
+            for t in rotated
+        ]
 
     # 以下所有方法完美兼容并修缮细节
     @classmethod
@@ -191,6 +188,101 @@ class ReplyGenerator:
         else:
             texts = ["你这话有点意思", "别只丢半句 继续", "这句我先记你一笔", "你这个语气有点可爱", "行 你继续我听着", "你这样我会惦记一下"]
         return [ReplyCandidate(text=text, source="early_pull_fallback") for text in texts]
+
+    @staticmethod
+    def _expression_intent(latest: str, action: str) -> str:
+        """Map the current plan and latest text to a reply motive."""
+        if action == "边界回应" or any(w in latest for w in ("有点压力", "太快", "先别", "不舒服", "别这样")):
+            return "BoundaryBackoff"
+        if action == "接情绪" or any(w in latest for w in ("累", "烦", "难受", "委屈", "压力", "想哭")):
+            return "Reassurance"
+        if action == "邀约推进" or any(w in latest for w in ("见面", "周末", "有空", "一起", "吃饭")):
+            return "LowPressureInvite"
+        if action in ("轻暧昧拉扯", "暧昧拉扯", "轻暧昧") or any(w in latest for w in ("想你", "抱抱", "亲亲", "贴贴")):
+            return "PlayfulWarmth"
+        if action in {"稳定回应", "框架应对"} or any(w in latest for w in ("别的女生", "她是谁", "吃醋", "你是不是")):
+            return "SteadyReassurance"
+        if action == "后撤" or any(w in latest for w in ("忙", "没空", "再说", "不想说", "先忙")):
+            return "SoftExit"
+        if any(w in latest for w in ("猫", "狗", "宠物", "拆家", "布偶")):
+            return "LifeCallback"
+        normalized_latest = re.sub(r"\s+", "", latest)
+        if normalized_latest in {"你好", "hi", "hello", "哈喽", "在吗"}:
+            return "Opening"
+        return "CuriousCallback"
+
+    @staticmethod
+    def _personality_package(profile: Mapping[str, Any]) -> str:
+        """Choose a lightweight style package from the dynamic profile."""
+        boundary = int(profile.get("boundary_sensitivity", 50) or 50)
+        reassurance = int(profile.get("reassurance_need", 50) or 50)
+        playfulness = int(profile.get("playfulness", 50) or 50)
+        leadership = int(profile.get("leadership_preference", 50) or 50)
+        if boundary >= 68:
+            return "克制型：少追问 低压力 偏职场"
+        if reassurance >= 68:
+            return "温暖型：先接情绪 给稳定感"
+        if playfulness >= 65:
+            return "轻松型：带一点调侃和接梗"
+        if leadership >= 65:
+            return "清晰型：短句明确 但不压迫"
+        return "平衡型：自然接话 轻微留口子"
+
+    @staticmethod
+    def _intent_variants(
+        expression_intent: str,
+        *,
+        latest: str,
+        memory: Mapping[str, Any],
+        clear_lead: bool,
+    ) -> list[str]:
+        """Return candidate variants for one expression motive."""
+        if expression_intent == "BoundaryBackoff":
+            return ["好 先不聊这个", "可以 你先舒服点", "收到 我退一步", "嗯 不给你压力", "好 这个先放着", "你先按自己节奏来"]
+        if expression_intent == "Opening":
+            return ["刚看到", "在呢 怎么啦", "嗨 今天怎么样", "来了 找我呀", "刚忙完 你呢", "嗯 在的"]
+        if expression_intent == "LifeCallback":
+            pet_label = ReplyGenerator._pet_label(memory)
+            return [
+                f"{pet_label}今天又营业了是吧" if pet_label else "它今天又营业了是吧",
+                "听着又气又想笑",
+                "你现在是案发现场负责人",
+                "它拆家 你善后",
+                "给我看看现场",
+                "这小家伙挺会折腾",
+            ]
+        if expression_intent == "Reassurance":
+            base = ["先喘口气", "这波确实挺烦的", "别自己硬扛", "我听着 你慢慢说", "先站你这边", "把最烦那段丢给我"]
+            return ["先别硬扛 把最烦那段丢给我", *base] if clear_lead else base
+        if expression_intent == "PlayfulWarmth":
+            return ["你这句有点意思", "别只丢半句 继续", "这语气有点可爱", "你这样我会惦记一下", "行 继续保持", "又开始偷偷撩我"]
+        if expression_intent == "LowPressureInvite":
+            return ["可以 周末哪天", "可以 先约轻松点", "那就找个顺路的", "你定时间 我定地方", "行 先不整复杂", "可以 看你哪天舒服"]
+        if expression_intent == "SteadyReassurance":
+            return ["你这句有点酸啊", "放心 没你想的那样", "这锅我先不背", "你要听真话吗", "我知道你在意啥", "别自己脑补太多"]
+        if expression_intent == "SoftExit":
+            return ["好 你先忙", "嗯 先不打扰你", "行 晚点再说", "收到 你先处理", "好 先这样", "你先按你的来"]
+        return ["这句有点意思", "嗯？怎么说", "你继续 我听着", "别只丢半句", "刚看到 怎么了", "这话我得听后续"]
+
+    @staticmethod
+    def _season_variants(texts: list[str], personality: str, profile: Mapping[str, Any]) -> list[str]:
+        """Apply small style seasoning without turning replies into templates."""
+        if personality.startswith("克制型"):
+            extras = ["先不急", "这个慢慢来", "你先舒服点"]
+        elif personality.startswith("温暖型"):
+            extras = ["我先接住", "别自己扛", "先站你这边"]
+        elif personality.startswith("轻松型"):
+            extras = ["有点可爱", "这句记下了", "你还挺会"]
+        elif personality.startswith("清晰型"):
+            extras = ["我来定一个轻的", "先别整复杂", "你定时间就行"]
+        else:
+            extras = ["继续", "怎么说", "我听着"]
+
+        result = [*texts]
+        for extra in extras:
+            if extra not in result:
+                result.append(extra)
+        return result
 
     @classmethod
     def _is_invite_text(cls, text: str) -> bool:

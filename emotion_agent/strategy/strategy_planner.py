@@ -1,4 +1,4 @@
-"""Strategy Planner - PUA高价值框架版（层层递进战略）"""
+"""Strategy Planner - low-pressure relationship communication strategy."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class ReplyPlan(BaseModel):
 
 
 class StrategyPlanner:
-    """PUA高价值框架决策引擎 - 层层递进"""
+    """Plan the next reply with comfort, pacing, and clear boundaries."""
 
     def plan(
         self,
@@ -72,73 +72,83 @@ class StrategyPlanner:
         sexual_tension = getattr(analysis_obj, "sexual_tension", 0)
         escalation = getattr(analysis_obj, "escalation_window", "low")
         favor_release = getattr(analysis_obj, "favor_release", 0)
+        risk_instruction = str(getattr(risk_obj, "strategy_instruction", "") or "")
 
-        # ==================== PUA高价值框架决策（重构优先级解耦策略踩踏） ====================
+        # ==================== 低压力沟通决策（舒适感优先） ====================
         
-        # 核心升级：如果意图已经显性触发“暧昧/性张力/撒娇”，即便脆弱度高，也绝不转为纯长辈式安慰，而是高价值拉扯
-        if intent in {"撒娇", "性暗示"} or sexual_tension >= 60:
-            objective = "回应她的信号，同时制造轻微张力"
-            tone = "松弛、带点坏、保持框架"
+        if "BACK_OFF" in risk_instruction:
+            objective = "对方表现出回避或压力信号，先退回安全社交距离"
+            tone = "克制、尊重、低压力"
+            action_type = "边界回应"
+            tactics = [
+                "完全接受对方当下的节奏，不解释、不追问、不提出新要求",
+                "回复控制在一句话内，表达尊重和空间感",
+                "不把冷淡、拒绝或回避理解成需要反击的信号"
+            ]
+
+        elif intent in {"撒娇", "亲近表达", "性暗示"} or sexual_tension >= 60:
+            objective = "回应她释放的轻松信号，同时维持舒适边界"
+            tone = "松弛、轻微调侃、不过度"
             action_type = "轻暧昧拉扯"
             tactics = [
                 "先自然接住她的撒娇或暗示，用轻调侃或反差回应",
-                "不要立刻猛烈升级过度承诺，保持高价值男性的节奏感",
-                "如果她同时表达了脆弱，在拉扯尾端给一句极其精准的专属偏爱，形成‘大叔与坏小子’的复合张力"
+                "不要立刻升级或过度承诺，保持节奏稳定",
+                "如果她同时表达了脆弱，在尾端给一句具体、温和的偏爱，形成温柔和幽默的轻微反差"
             ]
 
         elif intent in {"求安慰", "抱怨", "分享情绪", "工作压力"} or vuln >= 70:
-            objective = "先接住情绪建立安全感，再寻找时机拉回高价值框架"
-            tone = "稳重、温暖、具备绝对主导感"
+            objective = "先接住情绪建立安全感，再视氛围转回轻松话题"
+            tone = "稳重、温暖、有稳定感"
             action_type = "接情绪"
             tactics = [
-                "真实接住她的情绪，高价值男性绝不讲大道理，也不做无意义的复读机安慰",
-                "提供内核稳定的情绪黑洞支撑，让她产生‘天塌下来有你托底’的错觉",
-                "前期重点是提供高舒适度，避免闺蜜式连续追问，适时切入带领性话题"
+                "真实接住她的情绪，不讲大道理，也不做无意义的复读机安慰",
+                "提供稳定承接，让她感到当下被理解、被看见",
+                "前期重点是提供高舒适度，避免连续追问，适时给一个轻量话题出口"
             ]
 
         elif intent == "邀约" or (favor_release >= 60 and escalation != "low"):
-            objective = "趁热打铁，高姿态主导推进"
-            tone = "果断、带领、不纠结"
+            objective = "在对方释放明确窗口时，低压力落地安排"
+            tone = "清晰、轻松、不纠结"
             action_type = "邀约推进"
             tactics = [
-                "明确回应并给出方向，我来安排，你来出席即可",
-                "提供确定性的模糊邀约或用选择题降低对方的防备压力",
-                "建立见面后的轻松预期，绝不为了见一面而拉低姿态投其所好"
+                "明确回应并给出一个清晰但可拒绝的轻量选择",
+                "用时间、地点或活动中的一个变量降低对方的决策压力",
+                "建立轻松预期，不让邀约显得急迫或沉重"
             ]
 
-        elif intent in {"测试", "框架挑战", "吃醋"}:
-            objective = "稳住核心框架，降维反向筛选价值"
-            tone = "戏谑 + 情绪稳定 + 高姿态"
-            action_type = "框架应对"
+        elif intent in {"边界试探", "测试", "框架挑战", "吃醋"}:
+            objective = "稳住情绪，不进入防御性解释"
+            tone = "轻松、稳定、给一点确定感"
+            action_type = "稳定回应"
             tactics = [
-                "不慌张、不解释、不自证，视其为小女孩的无闹取闹",
-                "使用轻度幽默进行推拉，或者通过反向资格审视反客为主",
-                "在框架彻底夯实后给一点甜头或确定感，避免演变成真正的对抗"
+                "不慌张、不连环解释、不自证，把它视为对方在寻找安全感",
+                "使用轻度幽默化解紧张，再给一点确定感",
+                "避免把试探升级成对抗"
             ]
 
         elif intent in {"冷淡", "敷衍", "撤退"}:
-            objective = "优雅后撤，利用神秘感重新建立吸引"
-            tone = "极致松弛 + 神秘距离感"
+            objective = "尊重边界，退回安全社交距离"
+            tone = "克制、松弛、留空间"
             action_type = "后撤"
             tactics = [
-                "精简回复字数，不提供多余的情绪输出，斩断其对你的特权感",
-                "利落切断话题或留下微小的钩子，主动离场以降低需求感",
-                "将主动权和情绪反弹的空间留给对方，静待她下一次破冰"
+                "精简回复字数，不提供多余解释，也不提出新要求",
+                "利落结束当前话题或留下一个很轻的口子",
+                "把空间留给对方，等待她下一次自然开启"
             ]
 
         else:
-            objective = "建立多维吸引，制造良性情绪波动"
-            tone = "风趣 + 游刃有余 + 有底线"
+            objective = "延续轻松互动，建立舒适的来回感"
+            tone = "风趣、自然、有边界"
             action_type = "调侃"
             tactics = [
-                "轻松接话并在对话中加入轻微的情绪推拉",
-                "侧面无形展示高价值生活方式或认知，不追着聊，随时准备撤回",
-                "在话题结束时留下可延伸的情绪口子"
+                "轻松接话并制造一点自然的情绪起伏",
+                "结合真实生活细节，不追着聊，保留松弛感",
+                "在话题结束时留下可延伸的轻口子"
             ]
 
-        # 通用框架层层递进约束
+        # 通用舒适感约束
         tactics.extend([
-            f"动态框架参数 -> 阶段: {stage} | 当前意图: {intent} | 综合脆弱度: {vuln} | 实时性张力: {sexual_tension}",
+            f"动态沟通参数 -> 阶段: {stage} | 当前意图: {intent} | 情绪脆弱度: {vuln} | 亲近信号: {sexual_tension}",
             "严控自我节奏：高价值核心是不盲目自证，不随对方的情绪试探而频繁起伏",
             "推进铁律：前期做好深层情绪推拉与共鸣，严禁在舒适度未达标前盲目暴露显性需求感",
             "不可触碰的红线：任何阶段都必须有底线思维，不对无理试探进行任何妥协式跪舔"
@@ -148,10 +158,10 @@ class StrategyPlanner:
             objective=objective,
             tone=tone,
             action_type=action_type,
-            emotional_need="被看见，同时感到被高价值雄性吸引",
-            relationship_move="自然且在绝对框架内掌控推进节奏",
+            emotional_need="被看见，并感到交流是轻松安全的",
+            relationship_move="在舒适感和边界感内自然推进",
             tactics=self._dedupe(tactics),
-            avoid=["低情商废话安慰", "过度共情导致失去雄性带领感", "闺蜜式陪聊泥潭", "油腻的工业糖精话术", "暴露饥渴感和特权感"],
+            avoid=["低情商废话安慰", "过度解释", "连续追问", "油腻的工业糖精话术", "急迫推进和压迫感"],
             target_length="medium",
             candidate_count=8,
             behavior_profile=profile_obj,
@@ -268,7 +278,7 @@ class StrategyPlanner:
 
 def _demo() -> None:
     planner = StrategyPlanner()
-    # 模拟输入：测试在多重意图重叠（撒娇且高脆弱度）时，高价值拉扯机制是否能够成功跑通，而不被错误下沉
+    # 模拟输入：测试在多重意图重叠时，系统是否能兼顾情绪承接和舒适边界。
     plan = planner.plan(
         ConversationAnalysis(
             intent="撒娇",

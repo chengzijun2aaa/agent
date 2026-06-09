@@ -19,10 +19,23 @@ const favorabilityDetailEl = document.querySelector("#favorability-detail");
 const intentEl = document.querySelector("#intent");
 const memoryEl = document.querySelector("#memory");
 const candidatesEl = document.querySelector("#candidates");
+const opportunityActionEl = document.querySelector("#opportunity-action");
+const opportunityReasonEl = document.querySelector("#opportunity-reason");
+const opportunityNextEl = document.querySelector("#opportunity-next");
+const coachWhyEl = document.querySelector("#coach-why");
+const coachSendNoteEl = document.querySelector("#coach-send-note");
+const coachPointsEl = document.querySelector("#coach-points");
+const offlineReadinessEl = document.querySelector("#offline-readiness");
+const offlineTopicsEl = document.querySelector("#offline-topics");
+const offlineRescueEl = document.querySelector("#offline-rescue");
+const confidenceStreakEl = document.querySelector("#confidence-streak");
+const confidenceEncouragementEl = document.querySelector("#confidence-encouragement");
+const confidenceWinsEl = document.querySelector("#confidence-wins");
 
 // 💡 核心新增：会话命名管理器节点
 const sessionSelect = document.querySelector("#session-select");
 const addSessionBtn = document.querySelector("#add-session-btn");
+let lastResponseData = null;
 
 // ============================================================
 // 2. 状态渲染与核心防御层
@@ -62,6 +75,7 @@ function renderState(data) {
 
   renderMemory(data.memory || {});
   renderCandidates(data.candidates || []);
+  renderGrowthSupport(data.growth_support || {}, data.memory || {});
 }
 
 function renderMemory(memory) {
@@ -88,18 +102,97 @@ function renderCandidates(candidates) {
   if (!candidatesEl) return;
   candidatesEl.replaceChildren();
 
-  for (const candidate of candidates) {
+  candidates.forEach((candidate, index) => {
     const li = document.createElement("li");
     const textContent = typeof candidate === "string" ? candidate : candidate.text || "";
 
     // 【边界熔断拦截】
     if (textContent.includes("治治我") || textContent.includes("死了那条心")) {
-      continue;
+      return;
     }
 
-    li.textContent = textContent;
+    const text = document.createElement("span");
+    text.textContent = textContent;
+
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "candidate-copy-button";
+    copyButton.textContent = "复制";
+    copyButton.addEventListener("click", async () => {
+      await copyText(textContent);
+      await sendFeedback({
+        action: "candidate_copy",
+        selectedReply: textContent,
+        editedReply: textContent,
+        turnId: lastResponseData?.turn_id || "",
+        selectedIndex: index,
+      });
+      copyButton.textContent = "已复制";
+      setTimeout(() => {
+        copyButton.textContent = "复制";
+      }, 1000);
+    });
+
+    li.append(text, copyButton);
     candidatesEl.appendChild(li);
+  });
+}
+
+function renderGrowthSupport(growthSupport, memory) {
+  const socialCoach = growthSupport.social_coach || {};
+  const opportunity = growthSupport.opportunity || {};
+  const offlineAssist = growthSupport.offline_assist || {};
+  const confidence = growthSupport.confidence || memory.confidence || {};
+
+  if (opportunityActionEl) {
+    const confidenceText = opportunity.confidence !== undefined ? ` ${Number(opportunity.confidence).toFixed(0)}%` : "";
+    opportunityActionEl.textContent = `${opportunity.action || "-"}${confidenceText}`;
   }
+  if (opportunityReasonEl) opportunityReasonEl.textContent = opportunity.reason || "-";
+  if (opportunityNextEl) {
+    const nextStep = opportunity.next_step || "-";
+    const timing = opportunity.timing ? `｜${opportunity.timing}` : "";
+    opportunityNextEl.textContent = `${nextStep}${timing}`;
+  }
+
+  if (coachWhyEl) coachWhyEl.textContent = socialCoach.why_this_reply || "-";
+  if (coachSendNoteEl) coachSendNoteEl.textContent = socialCoach.send_note || "-";
+  renderList(coachPointsEl, socialCoach.learning_points || []);
+
+  if (offlineReadinessEl) offlineReadinessEl.textContent = offlineAssist.readiness || "-";
+  renderList(offlineTopicsEl, offlineAssist.topics || offlineAssist.preparation || []);
+  renderList(offlineRescueEl, offlineAssist.cold_rescue || []);
+
+  if (confidenceStreakEl) {
+    const streak = confidence.current_streak !== undefined ? confidence.current_streak : 0;
+    const totalWins = confidence.total_wins !== undefined ? confidence.total_wins : 0;
+    confidenceStreakEl.textContent = `连续 ${streak} 轮｜累计 ${totalWins} 个亮点`;
+  }
+  if (confidenceEncouragementEl) confidenceEncouragementEl.textContent = confidence.encouragement || "";
+  renderList(confidenceWinsEl, confidence.wins || recentWinDetails(confidence));
+}
+
+function renderList(target, items) {
+  if (!target) return;
+  target.replaceChildren();
+  const normalized = Array.isArray(items) ? items.filter(Boolean).slice(0, 4) : [];
+  if (!normalized.length) {
+    const li = document.createElement("li");
+    li.textContent = "暂无";
+    target.appendChild(li);
+    return;
+  }
+  for (const item of normalized) {
+    const li = document.createElement("li");
+    li.textContent = typeof item === "string" ? item : item.detail || item.skill || String(item);
+    target.appendChild(li);
+  }
+}
+
+function recentWinDetails(confidence) {
+  const wins = confidence.recent_wins || [];
+  if (!Array.isArray(wins)) return [];
+  return wins.map((win) => win.detail || win.skill).filter(Boolean);
 }
 
 // ============================================================
@@ -116,6 +209,148 @@ function appendBubble(role, text, extraClass = "") {
   messages.appendChild(bubble);
   messages.scrollTop = messages.scrollHeight;
   return bubble;
+}
+
+function appendAssistantReply(data) {
+  const reply = data.reply || "我在，你慢慢说";
+  const bubble = appendBubble("assistant", reply);
+  if (!bubble) return;
+
+  const actions = document.createElement("div");
+  actions.className = "reply-actions";
+
+  const editInput = document.createElement("textarea");
+  editInput.className = "reply-edit";
+  editInput.rows = 2;
+  editInput.value = reply;
+  editInput.setAttribute("aria-label", "实际发送文本");
+  editInput.title = "可以先改成你的口吻，再复制发送";
+
+  const buttonRow = document.createElement("div");
+  buttonRow.className = "reply-button-row";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "small-action-button";
+  copyButton.textContent = "复制回复";
+  copyButton.addEventListener("click", async () => {
+    const editedReply = editInput.value.trim() || reply;
+    await copyText(editedReply);
+    copyButton.textContent = "已复制";
+    setTimeout(() => {
+      copyButton.textContent = "复制回复";
+    }, 1200);
+    await sendFeedback({
+      action: "copy",
+      selectedReply: reply,
+      editedReply,
+      turnId: data.turn_id,
+      selectedIndex: data.ranked?.candidate ? candidateIndex(data.candidates || [], data.ranked.candidate.text) : null,
+    });
+  });
+
+  const sentButton = document.createElement("button");
+  sentButton.type = "button";
+  sentButton.className = "small-action-button";
+  sentButton.textContent = "记录已发";
+  sentButton.addEventListener("click", async () => {
+    const editedReply = editInput.value.trim() || reply;
+    await sendFeedback({
+      action: "sent",
+      selectedReply: reply,
+      editedReply,
+      turnId: data.turn_id,
+      selectedIndex: data.ranked?.candidate ? candidateIndex(data.candidates || [], data.ranked.candidate.text) : null,
+    });
+    markFeedback(sentButton, "已记录");
+  });
+
+  const goodButton = document.createElement("button");
+  goodButton.type = "button";
+  goodButton.className = "small-action-button positive";
+  goodButton.textContent = "好";
+  goodButton.addEventListener("click", async () => {
+    await sendFeedback({
+      action: "rating",
+      rating: "good",
+      selectedReply: reply,
+      editedReply: editInput.value.trim(),
+      turnId: data.turn_id,
+    });
+    markFeedback(goodButton, "已记好");
+  });
+
+  const badButton = document.createElement("button");
+  badButton.type = "button";
+  badButton.className = "small-action-button negative";
+  badButton.textContent = "不好";
+  badButton.addEventListener("click", async () => {
+    await sendFeedback({
+      action: "rating",
+      rating: "bad",
+      selectedReply: reply,
+      editedReply: editInput.value.trim(),
+      turnId: data.turn_id,
+    });
+    markFeedback(badButton, "已记不好");
+  });
+
+  buttonRow.append(copyButton, sentButton, goodButton, badButton);
+  actions.append(editInput, buttonRow);
+  bubble.appendChild(actions);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const temp = document.createElement("textarea");
+  temp.value = text;
+  temp.style.position = "fixed";
+  temp.style.left = "-9999px";
+  document.body.appendChild(temp);
+  temp.focus();
+  temp.select();
+  document.execCommand("copy");
+  temp.remove();
+}
+
+function markFeedback(button, text) {
+  const oldText = button.textContent;
+  button.textContent = text;
+  button.disabled = true;
+  setTimeout(() => {
+    button.textContent = oldText;
+    button.disabled = false;
+  }, 1200);
+}
+
+function candidateIndex(candidates, text) {
+  const index = candidates.findIndex((candidate) => (candidate.text || "") === text);
+  return index >= 0 ? index : null;
+}
+
+async function sendFeedback({ action, rating = "", selectedReply = "", editedReply = "", turnId = "", selectedIndex = null }) {
+  const currentGirlId = sessionSelect ? sessionSelect.value : "default_girl";
+  try {
+    await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: currentGirlId,
+        turn_id: turnId || lastResponseData?.turn_id || "",
+        action,
+        rating,
+        selected_reply: selectedReply,
+        selected_index: selectedIndex,
+        edited_reply: editedReply,
+      }),
+    });
+  } catch (error) {
+    console.warn("反馈日志记录失败:", error);
+  }
 }
 
 function setBusy(isBusy) {
@@ -152,7 +387,8 @@ async function sendMessage(text) {
     if (!response.ok) throw new Error(data.detail || data.error || "请求失败");
 
     if (loading) loading.remove();
-    appendBubble("assistant", data.reply || "我在，你慢慢说");
+    lastResponseData = data;
+    appendAssistantReply(data);
 
     // 渲染属于该女生的最新画像和侧边栏状态
     renderState(data);
@@ -178,6 +414,7 @@ if (sessionSelect) {
 
     if (messages) messages.replaceChildren();
     if (candidatesEl) candidatesEl.replaceChildren();
+    lastResponseData = null;
 
     appendBubble("assistant", `成功切入与【${targetGirlName}】的独立对话战局。`);
 
@@ -253,6 +490,7 @@ if (resetButton) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: currentGirlId }),
       });
+      lastResponseData = null;
       if (messages) messages.replaceChildren();
       appendBubble("assistant", "当前战局历史已清空，长期记忆还保留着。");
       if (candidatesEl) candidatesEl.replaceChildren();

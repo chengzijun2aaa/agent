@@ -17,6 +17,8 @@
     ],
     "expected_intent": "工作压力",
     "expected_risk": "low",
+    "expected_opportunity_action": "安抚",
+    "min_confidence_wins": 1,
     "max_favorability": 35,
     "forbidden_phrases": ["你应该", "别想太多"],
     "notes": "先共情，别上来给大道理。"
@@ -42,6 +44,8 @@
     ],
     "expected_intent": "邀约",
     "expected_stage": "L3",
+    "expected_opportunity_action": "邀约",
+    "min_confidence_wins": 1,
     "min_favorability": 15,
     "max_favorability": 55,
     "forbidden_phrases": ["我会认真分析", "让我们"],
@@ -65,6 +69,8 @@
       {"role": "user", "content": "周末一起吃饭吧"}
     ],
     "expected_intent": "邀约",
+    "expected_opportunity_action": "邀约",
+    "min_confidence_wins": 1,
     "min_favorability": 20,
     "max_favorability": 65,
     "expected_profile_min": {
@@ -82,6 +88,8 @@
       {"role": "user", "content": "最近再说吧"}
     ],
     "expected_intent": "冷淡",
+    "expected_opportunity_action": "收住",
+    "min_confidence_wins": 1,
     "max_favorability": 30,
     "expected_profile_min": {
       "boundary_sensitivity": 60

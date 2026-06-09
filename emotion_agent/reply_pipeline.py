@@ -17,6 +17,13 @@ from emotion_agent.humanizer.humanizer import Humanizer
 from emotion_agent.memory.memory_manager import MemoryManager
 from emotion_agent.ranker.reply_ranker import ReplyRanker, ReplyScore
 from emotion_agent.state.relationship_state_machine import RelationshipStateMachine
+from emotion_agent.strategy.growth_support import (
+    ConfidenceTracker,
+    GrowthSupportResult,
+    OfflineDateAssistant,
+    OpportunityDetector,
+    SocialCoach,
+)
 from emotion_agent.strategy.strategy_planner import ReplyPlan, StrategyPlanner
 
 
@@ -33,6 +40,7 @@ class ReplyPipelineResult(BaseModel):
     plan: ReplyPlan
     candidates: list[ReplyCandidate] = Field(default_factory=list)
     ranked: ReplyScore
+    growth_support: GrowthSupportResult = Field(default_factory=GrowthSupportResult)
 
 
 class ReplyPipeline:
@@ -54,6 +62,10 @@ class ReplyPipeline:
         self.reply_generator = ReplyGenerator(llm=llm)
         self.humanizer = Humanizer()
         self.reply_ranker = ReplyRanker()
+        self.opportunity_detector = OpportunityDetector()
+        self.social_coach = SocialCoach()
+        self.offline_assistant = OfflineDateAssistant()
+        self.confidence_tracker = ConfidenceTracker()
         self.llm = llm
 
     def run(self, chat_history: Sequence[str | Mapping[str, Any]]) -> ReplyPipelineResult:
@@ -75,9 +87,49 @@ class ReplyPipeline:
         candidates = self.reply_generator.generate(chat_history, plan, relationship_state, memory)
         humanized = self.humanizer.humanize(candidates)
         ranked = self.reply_ranker.rank(humanized, risk, relationship_state, chat_history, memory)
+        final_reply = ranked.candidate.text
+        opportunity = self.opportunity_detector.detect(
+            analysis=analysis,
+            relationship_state=relationship_state,
+            memory=memory,
+            risk=risk,
+            plan=plan,
+        )
+        confidence = self.confidence_tracker.update(
+            self.memory_manager.memory.user.confidence,
+            final_reply=final_reply,
+            analysis=analysis,
+            relationship_state=relationship_state,
+            opportunity=opportunity,
+            ranked=ranked,
+            risk=risk,
+        )
+        self.memory_manager.save_memory(self.memory_manager.memory)
+        memory = self.memory_manager.memory.user.summary()
+        social_coach = self.social_coach.explain(
+            final_reply=final_reply,
+            analysis=analysis,
+            relationship_state=relationship_state,
+            memory=memory,
+            risk=risk,
+            plan=plan,
+            opportunity=opportunity,
+        )
+        offline_assist = self.offline_assistant.prepare(
+            analysis=analysis,
+            relationship_state=relationship_state,
+            memory=memory,
+            opportunity=opportunity,
+        )
+        growth_support = GrowthSupportResult(
+            social_coach=social_coach,
+            opportunity=opportunity,
+            offline_assist=offline_assist,
+            confidence=confidence,
+        )
         _ = relationship_state_model
         return ReplyPipelineResult(
-            final_reply=ranked.candidate.text,
+            final_reply=final_reply,
             analysis=analysis,
             relationship_state=relationship_state,
             memory=memory,
@@ -85,6 +137,7 @@ class ReplyPipeline:
             plan=plan,
             candidates=humanized,
             ranked=ranked,
+            growth_support=growth_support,
         )
 
     @staticmethod

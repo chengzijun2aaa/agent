@@ -124,7 +124,7 @@ class RelationshipStateMachine:
 
         # 邀约意愿
         invitation = 0
-        if any(k in joined for k in ["见面", "一起", "周末", "有空", "出来", "吃饭", "要不要", "下次", "约"]):
+        if any(k in joined for k in ["见面", "见一下", "一起", "周末", "周六", "周日", "有空", "出来", "吃饭", "喝一杯", "咖啡", "要不要", "下次", "找天", "约"]):
             invitation = 60
             evidence.append("强邀约信号")
 
@@ -136,7 +136,7 @@ class RelationshipStateMachine:
 
         # 边界抵抗
         boundary_reduce = 0
-        if any(k in joined for k in ["别这样", "太快", "有压力", "别闹", "保持距离"]):
+        if any(k in joined for k in ["别这样", "太快", "有压力", "别闹", "保持距离", "不舒服", "先别聊", "太急", "慢一点", "有点过", "换个话题"]):
             boundary_reduce = -30
             evidence.append("边界抵抗")
         else:
@@ -150,7 +150,7 @@ class RelationshipStateMachine:
             "dependence": dependence,
             "boundary_reduce": boundary_reduce,
             "evidence": evidence,
-            "meeting_delta": 1 if "见面" in joined or "约" in joined else 0,
+            "meeting_delta": 1 if any(k in joined for k in ("见面", "见一下", "约", "出来", "吃饭", "喝一杯")) else 0,
             "message_count": len(user_messages),
         }
 

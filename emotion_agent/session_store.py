@@ -21,7 +21,7 @@ class SessionBundle:
     conversation_id: str
     memory_path: Path
     relationship_machine: RelationshipStateMachine
-    chat_history: list[dict[str, str]]
+    chat_history: list[dict[str, Any]]
 
 
 class SessionStore:
@@ -51,12 +51,13 @@ class SessionStore:
             chat_history=chat_history,
         )
 
-    def save_history(self, conversation_id: str, chat_history: list[dict[str, str]]) -> None:
+    def save_history(self, conversation_id: str, chat_history: list[dict[str, Any]]) -> None:
         """Persist the full current history for one conversation."""
         messages = [
             Message(
                 role=SenderRole.ASSISTANT if item.get("role") == "assistant" else SenderRole.USER,
                 content=str(item.get("content", "")),
+                metadata=item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {},
             )
             for item in chat_history
             if str(item.get("content", "")).strip()
@@ -72,9 +73,12 @@ class SessionStore:
         self.storage.clear_messages(conversation_id)
 
     @staticmethod
-    def _message_dict(message: Message) -> dict[str, str]:
+    def _message_dict(message: Message) -> dict[str, Any]:
         """Convert a typed message back into the server's history shape."""
-        return {"role": message.role.value, "content": message.content}
+        payload: dict[str, Any] = {"role": message.role.value, "content": message.content}
+        if message.metadata:
+            payload["metadata"] = dict(message.metadata)
+        return payload
 
 
 def _demo() -> None:

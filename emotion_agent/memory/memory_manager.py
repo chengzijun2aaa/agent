@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-CURRENT_MEMORY_VERSION = 2
+CURRENT_MEMORY_VERSION = 3
 
 
 class MemoryFact(BaseModel):
@@ -73,6 +73,48 @@ class FemaleProfile(BaseModel):
             "preferred_feedback": list(self.preferred_feedback),
             "avoided_moves": list(self.avoided_moves),
             "last_signals": list(self.last_signals),
+        }
+
+
+class ConfidenceWin(BaseModel):
+    """One small communication win recorded for user confidence building."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    skill: str = Field(default="", description="Skill category practiced in this turn.")
+    detail: str = Field(default="", description="Human-readable description of the win.")
+    evidence: str = Field(default="", description="Reply text or behavior that produced the win.")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("skill", "detail", "evidence", mode="before")
+    @classmethod
+    def normalize_text(cls, value: object) -> str:
+        """Normalize text fields to stripped strings."""
+        if value is None:
+            return ""
+        return str(value).strip()
+
+
+class ConfidenceMemory(BaseModel):
+    """Long-lived confidence building record for the person using the assistant."""
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    total_turns: int = Field(default=0, ge=0)
+    total_wins: int = Field(default=0, ge=0)
+    current_streak: int = Field(default=0, ge=0)
+    strengths: list[str] = Field(default_factory=list)
+    recent_wins: list[ConfidenceWin] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def summary(self) -> dict[str, Any]:
+        """Return a compact confidence report for UI and coaching."""
+        return {
+            "total_turns": self.total_turns,
+            "total_wins": self.total_wins,
+            "current_streak": self.current_streak,
+            "strengths": list(self.strengths),
+            "recent_wins": [win.model_dump(mode="json") for win in self.recent_wins[:6]],
         }
 
 
@@ -147,6 +189,7 @@ class UserMemory(BaseModel):
     travel_experiences: list[MemoryFact] = Field(default_factory=list)
     important_events: list[MemoryFact] = Field(default_factory=list)
     profile: FemaleProfile = Field(default_factory=FemaleProfile)
+    confidence: ConfidenceMemory = Field(default_factory=ConfidenceMemory)
 
     def summary(self) -> dict[str, Any]:
         """Return a compact dictionary for prompt injection or debugging."""
@@ -162,6 +205,7 @@ class UserMemory(BaseModel):
             "travel_experiences": [item.value for item in self.travel_experiences],
             "important_events": [item.value for item in self.important_events],
             "profile": self.profile.summary(),
+            "confidence": self.confidence.summary(),
         }
 
 
@@ -198,6 +242,13 @@ class MemoryStore(BaseModel):
             upgraded = dict(data)
             user = dict(upgraded.get("user", {}))
             user.setdefault("profile", FemaleProfile().model_dump(mode="json"))
+            upgraded["user"] = user
+            upgraded["version"] = CURRENT_MEMORY_VERSION
+            return upgraded
+        if version < 3:
+            upgraded = dict(data)
+            user = dict(upgraded.get("user", {}))
+            user.setdefault("confidence", ConfidenceMemory().model_dump(mode="json"))
             upgraded["user"] = user
             upgraded["version"] = CURRENT_MEMORY_VERSION
             return upgraded
@@ -396,19 +447,19 @@ class MemoryManager:
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "先安抚再安排")
             signals.append("需要先被接住")
 
-        if any(word in lower for word in ("你安排", "你决定", "听你的", "都可以", "随便你", "看你")):
+        if any(word in lower for word in ("你安排", "你决定", "听你的", "都可以", "随便你", "看你", "你说了算", "你来定", "看你安排")):
             profile.leadership_preference = self._nudge_int(profile.leadership_preference, 14)
             profile.progression_pace = self._nudge_float(profile.progression_pace, 0.06)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "清晰安排")
             signals.append("接受清晰带领")
 
-        if any(word in lower for word in ("见面", "一起", "周末", "有空", "出来", "吃饭", "咖啡", "电影")):
+        if any(word in lower for word in ("见面", "见一下", "一起", "周末", "周六", "周日", "有空", "出来", "吃饭", "咖啡", "电影", "喝一杯", "找天")):
             profile.leadership_preference = self._nudge_int(profile.leadership_preference, 8)
             profile.progression_pace = self._nudge_float(profile.progression_pace, 0.08)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "具体邀约")
             signals.append("邀约窗口")
 
-        if any(word in lower for word in ("别这样", "太快", "有压力", "别闹", "保持距离", "不舒服")):
+        if any(word in lower for word in ("别这样", "太快", "有压力", "别闹", "保持距离", "不舒服", "先别聊", "太急", "慢一点", "有点过")):
             profile.boundary_sensitivity = self._nudge_int(profile.boundary_sensitivity, 16)
             profile.sensitivity = self._nudge_int(profile.sensitivity, 10)
             profile.progression_pace = self._nudge_float(profile.progression_pace, -0.12)

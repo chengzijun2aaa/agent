@@ -35,6 +35,9 @@ class ReplyRanker:
     TOO_FAST_WORDS = ("爱你", "在一起", "做我女朋友", "今晚来我家", "想睡你", "过夜")
     FRIEND_ZONE_PHRASES = ("我听着", "你继续说", "慢慢说", "然后呢", "展开讲讲")
     PROGRESSION_PHRASES = ("见面", "周末", "我带你", "我来安排", "定一个", "回头", "下次", "记着", "靠我")
+    INVITE_PHRASES = ("见面", "出来", "出门", "周末", "周六", "周日", "有空", "一起", "吃饭", "电影", "咖啡", "喝一杯", "我带你", "我来安排", "定一个")
+    EMOTION_PULL_PHRASES = ("有点", "可爱", "记你", "别只", "继续", "我听着", "惦记", "先收下", "站你这边")
+    EXPLICIT_INVITE_SIGNALS = ("见面", "见一下", "周末", "周六", "周日", "有空", "一起", "吃饭", "出来", "电影", "咖啡", "喝一杯", "找天", "约")
     LEADERSHIP_PHRASES = ("我来安排", "我带你", "你定时间", "定一个", "我陪你捋", "交给我", "我站你这边")
     REASSURANCE_PHRASES = ("放心", "我在", "站你这边", "别自己扛", "先缓", "先喘口气", "哄你")
     PLAYFUL_PHRASES = ("有点", "可爱", "酸", "查我岗", "记你一笔", "别光", "你猜")
@@ -89,7 +92,7 @@ class ReplyRanker:
         wechat_feel = self._wechat_feel_score(text, length)
         no_simping = self._no_simping_score(text)
         no_greasy = self._no_greasy_score(text)
-        advance_speed = self._advance_speed_score(text, relationship_state, profile)
+        advance_speed = self._advance_speed_score(text, relationship_state, profile, chat_history)
         pressure = self._pressure_score(text, profile)
         emotional_value = self._emotional_value_score(text, chat_history)
         profile_fit = self._profile_fit_score(text, profile)
@@ -164,23 +167,38 @@ class ReplyRanker:
             score -= 30
         return max(25, min(100, score))
 
-    def _advance_speed_score(self, text: str, state: Mapping[str, Any], profile: Mapping[str, Any]) -> float:
+    def _advance_speed_score(
+        self,
+        text: str,
+        state: Mapping[str, Any],
+        profile: Mapping[str, Any],
+        chat_history: Any = None,
+    ) -> float:
         """推进速度是否合适"""
         stage = str(state.get("stage", "L1"))
         score = 78
         boundary = float(profile.get("boundary_sensitivity", 50) or 50)
         pace = float(profile.get("progression_pace", 1.0) or 1.0)
+        favorability = float(state.get("favorability_score", 0) or 0)
+        early_stage = stage in ("L1", "L2") or favorability < 35
+        latest = self._latest_text(chat_history)
+        explicit_invite_signal = any(w in latest for w in self.EXPLICIT_INVITE_SIGNALS)
+        has_invite = any(w in text for w in self.INVITE_PHRASES)
         
         if stage in ("L1", "L2") and any(w in text for w in self.TOO_FAST_WORDS):
             score -= 45
         if any(w in text for w in self.TOO_FAST_WORDS) and "见面" not in text:
             score -= 20
-        if any(w in text for w in self.PROGRESSION_PHRASES):
-            score += 16 if stage in ("L2", "L3", "L4", "L5", "L6") else 8
+        if has_invite and early_stage and not explicit_invite_signal:
+            score -= 28
+        elif any(w in text for w in self.PROGRESSION_PHRASES):
+            score += 16 if stage in ("L3", "L4", "L5", "L6") else 4
             if boundary >= 70 or pace <= 0.85:
                 score -= 8
+        if early_stage and not explicit_invite_signal and any(w in text for w in self.EMOTION_PULL_PHRASES):
+            score += 10
         if any(w in text for w in self.FRIEND_ZONE_PHRASES):
-            score -= 14
+            score -= 6 if early_stage else 14
             
         return max(30, min(100, score))
 
@@ -239,6 +257,12 @@ class ReplyRanker:
                 score += 12
             if any(word in text for word in ("别临时怂", "必须", "赶紧", "今晚", "过夜")):
                 score -= 25
+        try:
+            favorability = float(profile.get("favorability_score", 0) or 0)
+        except (TypeError, ValueError):
+            favorability = 0
+        if favorability < 35 and any(word in text for word in self.INVITE_PHRASES):
+            score -= 8
         return self._clamp(score)
 
     @staticmethod

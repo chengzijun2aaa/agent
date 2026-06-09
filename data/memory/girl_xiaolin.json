@@ -1,0 +1,91 @@
+{
+  "version": 3,
+  "user": {
+    "name": null,
+    "age": null,
+    "occupation": null,
+    "city": null,
+    "pets": [],
+    "interests": [],
+    "birthday": null,
+    "dietary_habits": [],
+    "travel_experiences": [],
+    "important_events": [],
+    "profile": {
+      "label": "平衡观察型",
+      "communication_style": "balanced",
+      "progression_pace": 0.99,
+      "leadership_preference": 50,
+      "reassurance_need": 50,
+      "playfulness": 50,
+      "sensitivity": 50,
+      "boundary_sensitivity": 50,
+      "preferred_feedback": [],
+      "avoided_moves": [],
+      "last_signals": [],
+      "updated_at": "2026-06-09T06:27:20.325637Z"
+    },
+    "confidence": {
+      "total_turns": 4,
+      "total_wins": 8,
+      "current_streak": 4,
+      "strengths": [
+        "边界感",
+        "自然表达"
+      ],
+      "recent_wins": [
+        {
+          "skill": "边界感",
+          "detail": "没有用压迫或命令语气。",
+          "evidence": "那下次见面我考考你，看你是不是真爱粉",
+          "created_at": "2026-06-09T06:27:26.909919Z"
+        },
+        {
+          "skill": "自然表达",
+          "detail": "回复控制得比较短，像正常微信。",
+          "evidence": "那下次见面我考考你，看你是不是真爱粉",
+          "created_at": "2026-06-09T06:27:26.909910Z"
+        },
+        {
+          "skill": "边界感",
+          "detail": "没有用压迫或命令语气。",
+          "evidence": "下次见面你讲给我听…",
+          "created_at": "2026-06-09T06:26:02.181785Z"
+        },
+        {
+          "skill": "自然表达",
+          "detail": "回复控制得比较短，像正常微信。",
+          "evidence": "下次见面你讲给我听…",
+          "created_at": "2026-06-09T06:26:02.181730Z"
+        },
+        {
+          "skill": "边界感",
+          "detail": "没有用压迫或命令语气。",
+          "evidence": "哈哈 好 我低调点…",
+          "created_at": "2026-06-09T06:24:00.723925Z"
+        },
+        {
+          "skill": "自然表达",
+          "detail": "回复控制得比较短，像正常微信。",
+          "evidence": "哈哈 好 我低调点…",
+          "created_at": "2026-06-09T06:24:00.723917Z"
+        },
+        {
+          "skill": "边界感",
+          "detail": "没有用压迫或命令语气。",
+          "evidence": "刚醒，看到你这条消息还挺高兴的",
+          "created_at": "2026-06-09T06:21:36.622553Z"
+        },
+        {
+          "skill": "自然表达",
+          "detail": "回复控制得比较短，像正常微信。",
+          "evidence": "刚醒，看到你这条消息还挺高兴的",
+          "created_at": "2026-06-09T06:21:36.622515Z"
+        }
+      ],
+      "updated_at": "2026-06-09T06:27:26.909930Z"
+    }
+  },
+  "created_at": "2026-06-09T06:21:25.189354Z",
+  "updated_at": "2026-06-09T06:27:20.325662Z"
+}

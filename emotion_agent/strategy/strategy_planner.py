@@ -80,6 +80,9 @@ class StrategyPlanner:
         avoided_moves = [str(item) for item in profile_data.get("avoided_moves", []) if str(item).strip()]
         profile_label = str(profile_data.get("label", "平衡观察型") or "平衡观察型")
         boundary_cautious = boundary_sensitivity >= 70 or progression_pace <= 0.85
+        early_stage = stage in {"L1", "L2"} or favorability < 35
+        strong_invite_signal = intent == "邀约" or invitation >= 55
+        invite_ready = strong_invite_signal or stage in {"L4", "L5", "L6"} or favorability >= 55
 
         progress_ready = (
             stage in {"L2", "L3", "L4", "L5", "L6"}
@@ -98,33 +101,38 @@ class StrategyPlanner:
             tone = "稳、温柔、带一点男友感"
             if leadership_preference >= 65:
                 tone = "稳、温柔、清晰安排"
-            action_type = "接情绪推进" if progress_ready else "接情绪"
+            if invite_ready and not early_stage:
+                action_type = "接情绪推进"
+            elif progress_ready:
+                action_type = "接情绪拉扯"
+            else:
+                action_type = "接情绪"
             tactics = [
                 "先承接她的情绪，不讲大道理",
-                "第二句给偏爱感，不只当树洞",
-                "能推进时自然带到见面、陪她放松、下次带她缓一缓",
+                "第二句给偏爱感或轻轻逗一下，不只当树洞",
+                "前期重点是情绪推拉和陪伴感，不默认落到见面",
                 "避免连续追问和纯陪聊"
             ]
 
         elif intent in {"撒娇", "性暗示"} or sexual_tension >= 65:
             # 调情要轻，不跳过对方反馈。
-            objective = "接住撒娇，同时把暧昧感往见面和偏爱推进"
+            objective = "接住撒娇，同时制造轻暧昧和来回感"
             tone = "松弛、轻暧昧、有一点占有感"
             if boundary_cautious:
                 tone = "松弛、轻暧昧、不过界"
-            action_type = "轻暧昧推进"
+            action_type = "轻暧昧推进" if invite_ready and not early_stage else "暧昧拉扯"
             tactics = [
                 "先回应她的撒娇，不立刻讲道理",
                 "给一句偏爱或轻调侃",
-                "把话题落到下次见面、抱一下、带她放松等低压力场景",
+                "前期先拉情绪和张力，不把每句话都落到见面",
                 "不越过明确边界"
             ]
 
-        elif intent in {"邀约", "释放好感"} or (stage in {"L4", "L5"} and favor_release >= 60):
+        elif strong_invite_signal or ((intent == "释放好感" or favor_release >= 60) and invite_ready and not early_stage):
             # 该推进 / 邀约
             objective = "趁热打铁推进关系"
             tone = "果断 + 带领"
-            action_type = "推进"
+            action_type = "邀约推进"
             tactics = [
                 "明确接受邀约并主导细节",
                 "给出具体时间或地点方向",
@@ -157,15 +165,15 @@ class StrategyPlanner:
 
         else:  # 默认
             if progress_ready:
-                objective = "避免纯闲聊，把话题轻轻往暧昧或见面推进"
+                objective = "避免纯闲聊，把话题推到情绪来回和轻暧昧"
                 tone = "松弛 + 轻暧昧 + 有方向"
                 if leadership_preference >= 65:
                     tone = "松弛 + 清晰带领 + 有方向"
-                action_type = "轻暧昧推进"
+                action_type = "情绪拉扯" if early_stage and not strong_invite_signal else "轻暧昧推进"
                 tactics = [
                     "抓住她的话题做一句回应",
                     "加一点男女感，不只做朋友式陪聊",
-                    "能自然邀约时给一个轻量见面钩子"
+                    "前期多做情绪推拉、轻调侃、反差回应，少用显性邀约"
                 ]
             else:
                 objective = "建立吸引，先让聊天有轻松张力"
@@ -177,7 +185,10 @@ class StrategyPlanner:
                     "留下下一句能回的口子"
                 ]
 
-        if boundary_cautious and action_type in {"推进", "轻暧昧推进", "接情绪推进"}:
+        if early_stage and not strong_invite_signal:
+            tactics.append("前期显性邀约比例要低，6-8条候选里最多2条带见面/出来/周末，其余做情绪推拉")
+            tactics.append("不要把“见面、出来、我带你、周末”当默认落点，先让她愿意继续回")
+        if boundary_cautious and action_type in {"邀约推进", "轻暧昧推进", "接情绪推进", "接情绪拉扯", "暧昧拉扯", "情绪拉扯"}:
             tactics.append("她对边界或节奏更敏感，推进要用选择题和低压力安排，不用压迫感")
         if leadership_preference >= 65:
             tactics.append("画像提示：她更接受清晰带领，回复里可以给安排、给方向、给收场")
@@ -193,7 +204,7 @@ class StrategyPlanner:
         tactics.extend([
             f"当前阶段: {stage} | Intent: {intent} | 好感度: {favorability:.1f} | 主动性: {initiative:.1f} | 画像: {profile_label}",
             "不要连续三轮只安慰或只问问题",
-            "每次回复尽量包含：接她的话 + 一点态度 + 一个轻推进",
+            "每次回复尽量包含：接她的话 + 一点态度 + 一个可接的情绪口子",
             "主导感=稳定、清楚、有安排，不是命令、压迫或替对方做决定"
         ])
 

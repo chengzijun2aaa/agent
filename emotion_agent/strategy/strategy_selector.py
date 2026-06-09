@@ -100,6 +100,5 @@ def _demo() -> None:
     """Run a small module smoke test."""
     print(f"{StrategySelector.default().__class__.__name__} ready")
 
-
 if __name__ == "__main__":
     _demo()

@@ -193,7 +193,10 @@ class OpportunityDetector:
         intent = analysis.intent
         favorability = float(relationship_state.get("favorability_score", 0) or 0)
         invitation = float(relationship_state.get("invitation_willingness", 0) or 0)
+        stage = str(relationship_state.get("stage", "L1"))
         boundary = float(self._profile(memory).get("boundary_sensitivity", 50) or 50)
+        early_stage = stage in {"L1", "L2"} or favorability < 35
+        explicit_invite = intent == "邀约" or invitation >= 55
 
         if intent in {"冷淡", "敷衍", "撤退"} or boundary >= 75:
             return OpportunityReport(
@@ -214,8 +217,17 @@ class OpportunityDetector:
                 timing="等她情绪落下来后，再考虑邀约或转轻松话题。",
             )
 
-        if intent == "邀约" or invitation >= 55 or ("推进" in plan.action_type and favorability >= 30):
-            confidence = 86 if intent == "邀约" else 70
+        if early_stage and not explicit_invite:
+            return OpportunityReport(
+                action="继续聊",
+                confidence=74,
+                reason="当前还在前期，重点不是急着约出去，而是把聊天拉出无聊感，制造一点情绪来回。",
+                next_step="接她的话题，加一点轻调侃或偏爱感，再留一个她容易接的口子。",
+                timing="等她主动释放见面窗口、连续高质量互动，或好感度更稳定后再邀约。",
+            )
+
+        if explicit_invite or ("推进" in plan.action_type and favorability >= 45):
+            confidence = 86 if explicit_invite else 70
             return OpportunityReport(
                 action="邀约",
                 confidence=confidence,

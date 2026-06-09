@@ -21,6 +21,16 @@ class ReplyCandidate(BaseModel):
 class ReplyGenerator:
     """Generate concise relationship-aware reply candidates."""
 
+    INVITE_PHRASES = (
+        "见面", "出来", "出门", "周末", "周六", "周日", "有空", "一起",
+        "吃饭", "电影", "咖啡", "喝一杯", "我带你", "我来安排", "定一个",
+        "定时间", "定地方", "找天", "下次见",
+    )
+    EXPLICIT_INVITE_SIGNALS = (
+        "见面", "见一下", "周末", "周六", "周日", "有空", "一起",
+        "吃饭", "出来", "电影", "咖啡", "喝一杯", "找天", "约",
+    )
+
     def __init__(self, llm: Any | None = None) -> None:
         self.llm = llm
 
@@ -37,8 +47,10 @@ class ReplyGenerator:
         
         if len(candidates) < 4:
             candidates.extend(self._generate_with_rules(chat_history, plan, relationship_state, memory))
-        
-        return self._dedupe(candidates)[: plan.candidate_count or 6]
+
+        deduped = self._dedupe(candidates)
+        capped = self._cap_early_invites(deduped, chat_history, relationship_state, plan)
+        return capped[: plan.candidate_count or 6]
 
     def _generate_with_llm(self, chat_history, plan: ReplyPlan, relationship_state, memory) -> list[ReplyCandidate]:
         prompt = self._build_prompt(chat_history, plan, relationship_state, memory)
@@ -61,6 +73,14 @@ class ReplyGenerator:
         action = getattr(plan, "action_type", "推进")
         profile = self._profile(memory)
         profile_lines = self._format_profile(profile)
+        early_stage = self._is_early_stage(relationship_state)
+        invite_signal = self._has_explicit_invite_signal(chat_history)
+        invite_rule = (
+            "当前是前期：不要把推进写成频繁邀约。6-8条里最多2条出现“见面/出来/周末/我带你”，"
+            "其余要做情绪推拉、轻调侃、反差回应、偏爱感、留口子。"
+            if early_stage and not invite_signal
+            else "如果她已经主动释放见面窗口，可以自然落到具体安排，但仍然保持低压力。"
+        )
 
         return f"""
 你是一个真实、松弛、会聊天的男人，正在微信和女生聊天。
@@ -72,6 +92,8 @@ class ReplyGenerator:
 - 先像真人，再像高情商助手；先接她的话，再给态度和方向
 - 主导感=稳定、清楚、有安排、有收场，不是命令、压迫或替她决定
 - 可以有一点调侃和张力，但要贴合她的话，不油、不硬推
+- 前期推进=情绪推拉、轻调侃、偏爱感、让她愿意继续回；不是每句都邀约
+- {invite_rule}
 - 根据以下行动类型调整语气：
 
 当前行动类型：{action}
@@ -87,7 +109,7 @@ class ReplyGenerator:
 
 直接生成 6-8 条回复，每条一行，只输出纯文本，不要编号，不要引号。
 可以带表情，但别太多。
-        注意：不要只安慰或只问问题。合适时带一点关系方向，比如“我带你去缓缓”“见面再说”“这句我记着”。
+        注意：不要只安慰或只问问题。前期关系方向优先用“这句我记着”“你这话有点意思”“别只丢半句”这种轻拉扯；后期或她主动提见面时再落到邀约。
         底线：不替对方表达同意，不用命令或压迫语气，不把脆弱情绪当成冒犯推进的理由。
 """.strip()
 
@@ -97,6 +119,8 @@ class ReplyGenerator:
         action = getattr(plan, "action_type", "推进")
         objective = getattr(plan, "objective", "")
         profile = ReplyGenerator._profile(memory)
+        early_stage = ReplyGenerator._is_early_stage(relationship_state)
+        explicit_invite_signal = ReplyGenerator._has_explicit_invite_signal(chat_history)
         leadership = int(profile.get("leadership_preference", 50) or 50)
         reassurance = int(profile.get("reassurance_need", 50) or 50)
         playfulness = int(profile.get("playfulness", 50) or 50)
@@ -149,22 +173,57 @@ class ReplyGenerator:
                 ]
             if clear_lead:
                 base.insert(0, "先停一下，喝口水，最烦那段丢给我")
-        elif any(w in latest for w in ("加班", "老板", "工作", "项目", "催", "压力", "烦死", "累", "难受", "委屈", "想哭")):
+        elif action == "接情绪拉扯":
             base = [
-                "今天这波确实挺耗你",
-                "先别硬撑，回头带你缓缓",
-                "听着就烦，先站你这边",
-                "你先说，晚点我哄你",
-                "这时候别自己扛",
-                "先喘口气，剩下的见面慢慢说",
+                "今天这波确实有点烦你",
+                "先别硬撑，跟我说两句",
+                "你这状态我先接住了",
+                "别自己闷着，丢给我一点",
+                "行，今天先站你这边",
+                "这句我记着，先把气顺下来",
             ]
-            if clear_lead:
+            if needs_reassurance:
                 base = [
-                    "先别硬扛，晚点我带你去缓缓",
-                    "你先把最烦那段丢给我",
-                    "今晚先别内耗，剩下的我陪你捋",
+                    "先别自己扛，我在这边",
+                    "你先缓一下，我听着",
+                    "这事确实耗你，别一个人憋着",
                     *base,
                 ]
+            if clear_lead:
+                base.insert(0, "先喝口水，最烦那段讲给我")
+        elif any(w in latest for w in ("加班", "老板", "工作", "项目", "催", "压力", "烦死", "累", "难受", "委屈", "想哭")):
+            if early_stage and not explicit_invite_signal:
+                base = [
+                    "今天这波确实挺耗你",
+                    "听着就烦，先站你这边",
+                    "你先说，别自己憋着",
+                    "这时候别硬撑",
+                    "行，先把最烦那段丢给我",
+                    "你这状态有点让人想管一下",
+                ]
+            else:
+                base = [
+                    "今天这波确实挺耗你",
+                    "先别硬撑，回头带你缓缓",
+                    "听着就烦，先站你这边",
+                    "你先说，晚点我哄你",
+                    "这时候别自己扛",
+                    "先喘口气，剩下的见面慢慢说",
+                ]
+            if clear_lead:
+                if early_stage and not explicit_invite_signal:
+                    base = [
+                        "先别硬扛，把最烦那段丢给我",
+                        "今晚先别内耗，我陪你捋两句",
+                        *base,
+                    ]
+                else:
+                    base = [
+                        "先别硬扛，晚点我带你去缓缓",
+                        "你先把最烦那段丢给我",
+                        "今晚先别内耗，剩下的我陪你捋",
+                        *base,
+                    ]
             if boundary_cautious:
                 base = [
                     "今天这波确实挺耗你，先缓一下",
@@ -193,6 +252,22 @@ class ReplyGenerator:
                     "行啊，找个你舒服的时间",
                     "可以，不赶，先吃个饭",
                     "周末哪天方便",
+                ]
+        elif action == "邀约推进":
+            base = [
+                "可以，找个轻松点的",
+                "行，我来安排个不赶的",
+                "那就定个时间",
+                "可以，你定时间我定地方",
+                "别光说，找天落地",
+                "行，先约个轻松的",
+            ]
+            if boundary_cautious:
+                base = [
+                    "可以，不赶，找个你舒服的时间",
+                    "行，先定个轻松点的",
+                    "可以，别有压力，简单见一下",
+                    *base,
                 ]
         elif any(w in latest for w in ("别的女生", "别的女人", "她是谁", "那个女生", "女生是谁", "和别人", "聊得开心", "是不是喜欢", "吃醋", "对她也这样", "没那么在意")):
             base = [
@@ -232,6 +307,29 @@ class ReplyGenerator:
                 base = [
                     "过来，先哄你三分钟",
                     "行，今天先归我哄",
+                    *base,
+                ]
+        elif action in {"暧昧拉扯", "情绪拉扯"}:
+            base = [
+                "你这话有点意思",
+                "别只丢半句，继续",
+                "这句我先记你一笔",
+                "你这个语气有点可爱",
+                "行，你继续，我听着",
+                "你这样我会惦记一下",
+            ]
+            if clear_lead:
+                base = [
+                    "别急着跑题，这句展开",
+                    "你这话我先记着",
+                    "继续说，我听重点",
+                    *base,
+                ]
+            if boundary_cautious:
+                base = [
+                    "行，先不逗太过",
+                    "你继续，我听着",
+                    "这句我先收下",
                     *base,
                 ]
         elif action == "轻暧昧推进":
@@ -284,6 +382,91 @@ class ReplyGenerator:
         offset = ReplyGenerator._stable_offset(latest)
         rotated = base[offset:] + base[:offset]
         return [ReplyCandidate(text=t, source="rules", metadata={"profile_label": profile.get("label", "")}) for t in rotated]
+
+    @classmethod
+    def _cap_early_invites(
+        cls,
+        candidates: Sequence[ReplyCandidate],
+        chat_history: Sequence,
+        relationship_state: Mapping[str, Any],
+        plan: ReplyPlan,
+    ) -> list[ReplyCandidate]:
+        """Keep early-stage candidates focused on emotional momentum, not repeated invites."""
+        if not cls._is_early_stage(relationship_state) or cls._has_explicit_invite_signal(chat_history):
+            return list(candidates)
+
+        candidate_count = plan.candidate_count or 6
+        limit = max(1, min(2, int(round(candidate_count * 0.25))))
+        invite_count = 0
+        result: list[ReplyCandidate] = []
+
+        for candidate in candidates:
+            if cls._is_invite_text(candidate.text):
+                if invite_count < limit:
+                    result.append(candidate)
+                    invite_count += 1
+            else:
+                result.append(candidate)
+
+        for fallback in cls._early_pull_fallbacks(chat_history):
+            if len(result) >= candidate_count:
+                break
+            key = re.sub(r"\W+", "", fallback.text.lower())
+            if not any(re.sub(r"\W+", "", item.text.lower()) == key for item in result):
+                result.append(fallback)
+
+        return result[:candidate_count]
+
+    @classmethod
+    def _early_pull_fallbacks(cls, chat_history: Sequence) -> list[ReplyCandidate]:
+        """Return non-invite fallbacks for early-stage emotional momentum."""
+        latest = cls._latest_text(chat_history)
+        if any(w in latest for w in ("累", "烦", "难受", "委屈", "压力", "想哭")):
+            texts = [
+                "这波确实挺耗你",
+                "先别硬撑，丢给我两句",
+                "听着就烦，先站你这边",
+                "你这状态我先接住了",
+            ]
+        elif any(w in latest for w in ("猫", "狗", "宠物", "拆家")):
+            texts = [
+                "它今天又营业了是吧",
+                "你现在是案发现场负责人",
+                "听着又气又想笑",
+                "给我看看现场",
+            ]
+        else:
+            texts = [
+                "你这话有点意思",
+                "别只丢半句，继续",
+                "这句我先记你一笔",
+                "你这个语气有点可爱",
+                "行，你继续，我听着",
+                "你这样我会惦记一下",
+            ]
+        return [ReplyCandidate(text=text, source="early_pull_fallback") for text in texts]
+
+    @classmethod
+    def _is_invite_text(cls, text: str) -> bool:
+        """Return whether a reply is an explicit invitation or meeting arrangement."""
+        normalized = str(text).lower()
+        return any(phrase in normalized for phrase in cls.INVITE_PHRASES)
+
+    @classmethod
+    def _has_explicit_invite_signal(cls, chat_history: Sequence) -> bool:
+        """Return whether the latest user message already opened an invitation window."""
+        latest = cls._latest_text(chat_history).lower()
+        return any(phrase in latest for phrase in cls.EXPLICIT_INVITE_SIGNALS)
+
+    @staticmethod
+    def _is_early_stage(relationship_state: Mapping[str, Any]) -> bool:
+        """Return whether this conversation should avoid invite-heavy replies."""
+        stage = str(relationship_state.get("stage", "L1"))
+        try:
+            favorability = float(relationship_state.get("favorability_score", 0) or 0)
+        except (TypeError, ValueError):
+            favorability = 0.0
+        return stage in {"L1", "L2"} or favorability < 35
 
     @staticmethod
     def _format_history(chat_history: Sequence) -> str:

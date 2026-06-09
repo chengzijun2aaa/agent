@@ -155,6 +155,21 @@ class ReplyGenerator:
             ]
             if clear_lead:
                 base.insert(2, "先拍照留证据，我看看它战绩")
+        elif any(w in latest for w in ("吃", "饭", "撑", "奶茶", "火锅", "烧烤", "甜品", "饿")) and not explicit_invite_signal:
+            base = [
+                "吃撑了还来报备一下",
+                "看来这顿挺认真",
+                "你这是吃到位了",
+                "撑到什么程度",
+                "这句听着还挺满足",
+                "行，今天胃口赢了",
+            ]
+            if playful:
+                base = [
+                    "吃撑了还挺理直气壮",
+                    "你这属于快乐过量",
+                    *base,
+                ]
         elif action == "接情绪推进":
             base = [
                 "先别硬撑，回头我带你去缓缓",
@@ -353,6 +368,21 @@ class ReplyGenerator:
                     "这句我先收下，不逗太过",
                     "行，先记着，慢慢来",
                     "你继续，我听着",
+                ]
+        elif action == "调侃":
+            base = [
+                "你这话有点随手，但我接到了",
+                "行，抓到一个小细节",
+                "你这状态还挺真实",
+                "这句不像随便说的",
+                "别只丢半句，继续",
+                "你这个语气有点意思",
+            ]
+            if clear_lead:
+                base = [
+                    "这句展开，我听重点",
+                    "别只丢半句，继续说",
+                    *base,
                 ]
         elif action == "后撤":
             base = [

@@ -6,7 +6,9 @@ if __package__ in {None, ""}:
     import sitecustomize  # noqa: F401
 
 import json
+import os
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -19,7 +21,6 @@ CURRENT_MEMORY_VERSION = 3
 
 class MemoryFact(BaseModel):
     """One normalized memory value with provenance metadata."""
-
     model_config = ConfigDict(extra="ignore")
 
     value: str = Field(default="", description="Normalized fact value.")
@@ -30,20 +31,13 @@ class MemoryFact(BaseModel):
     @field_validator("value", "evidence", mode="before")
     @classmethod
     def normalize_text(cls, value: object) -> str:
-        """Normalize text fields to stripped strings."""
         if value is None:
             return ""
         return str(value).strip()
 
 
 class FemaleProfile(BaseModel):
-    """Long-lived interaction profile for one woman.
-
-    The profile is not a label for the person. It is a compact operating model
-    for the assistant: how fast to progress, how direct to be, and what kind of
-    emotional feedback tends to land well with this specific conversation.
-    """
-
+    """Long-lived interaction profile for one woman."""
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     label: str = "平衡观察型"
@@ -60,7 +54,6 @@ class FemaleProfile(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def summary(self) -> dict[str, Any]:
-        """Return a compact profile for planning, generation, and UI debug panels."""
         return {
             "label": self.label,
             "communication_style": self.communication_style,
@@ -78,7 +71,6 @@ class FemaleProfile(BaseModel):
 
 class ConfidenceWin(BaseModel):
     """One small communication win recorded for user confidence building."""
-
     model_config = ConfigDict(extra="ignore")
 
     skill: str = Field(default="", description="Skill category practiced in this turn.")
@@ -89,7 +81,6 @@ class ConfidenceWin(BaseModel):
     @field_validator("skill", "detail", "evidence", mode="before")
     @classmethod
     def normalize_text(cls, value: object) -> str:
-        """Normalize text fields to stripped strings."""
         if value is None:
             return ""
         return str(value).strip()
@@ -97,7 +88,6 @@ class ConfidenceWin(BaseModel):
 
 class ConfidenceMemory(BaseModel):
     """Long-lived confidence building record for the person using the assistant."""
-
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     total_turns: int = Field(default=0, ge=0)
@@ -108,7 +98,6 @@ class ConfidenceMemory(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def summary(self) -> dict[str, Any]:
-        """Return a compact confidence report for UI and coaching."""
         return {
             "total_turns": self.total_turns,
             "total_wins": self.total_wins,
@@ -120,7 +109,6 @@ class ConfidenceMemory(BaseModel):
 
 class PetMemory(BaseModel):
     """Structured pet memory."""
-
     model_config = ConfigDict(extra="ignore")
 
     species: str = Field(default="", description="Pet species, such as cat or dog.")
@@ -133,21 +121,18 @@ class PetMemory(BaseModel):
     @field_validator("species", "breed", "name", "evidence", mode="before")
     @classmethod
     def normalize_text(cls, value: object) -> str:
-        """Normalize text fields to stripped strings."""
         if value is None:
             return ""
         return str(value).strip()
 
     @property
     def display(self) -> str:
-        """Return a compact human-readable pet description."""
         species = "" if self.species and self.breed.endswith(self.species) else self.species
         return "".join(part for part in (self.name, self.breed, species) if part)
 
 
 class MemoryExtraction(BaseModel):
     """Facts extracted from one message or a batch of messages."""
-
     model_config = ConfigDict(extra="ignore")
 
     name: MemoryFact | None = None
@@ -162,10 +147,8 @@ class MemoryExtraction(BaseModel):
     important_events: list[MemoryFact] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
-        """Return whether no useful fact was extracted."""
         scalar_empty = all(
-            item is None
-            for item in (self.name, self.age, self.occupation, self.city, self.birthday)
+            item is None for item in (self.name, self.age, self.occupation, self.city, self.birthday)
         )
         list_empty = not any(
             (self.pets, self.interests, self.dietary_habits, self.travel_experiences, self.important_events)
@@ -175,7 +158,6 @@ class MemoryExtraction(BaseModel):
 
 class UserMemory(BaseModel):
     """Long-lived memory fields for one user."""
-
     model_config = ConfigDict(extra="ignore")
 
     name: MemoryFact | None = None
@@ -192,7 +174,6 @@ class UserMemory(BaseModel):
     confidence: ConfidenceMemory = Field(default_factory=ConfidenceMemory)
 
     def summary(self) -> dict[str, Any]:
-        """Return a compact dictionary for prompt injection or debugging."""
         return {
             "name": self.name.value if self.name else "",
             "age": self.age.value if self.age else "",
@@ -211,7 +192,6 @@ class UserMemory(BaseModel):
 
 class MemoryStore(BaseModel):
     """Versioned persistent memory document."""
-
     model_config = ConfigDict(extra="ignore")
 
     version: int = CURRENT_MEMORY_VERSION
@@ -222,10 +202,7 @@ class MemoryStore(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def upgrade_version(cls, data: object) -> object:
-        """Upgrade older memory document shapes before validation."""
-        if not isinstance(data, dict):
-            return data
-        if not data:
+        if not isinstance(data, dict) or not data:
             return data
         version = int(data.get("version", 0) or 0)
         if version < 1:
@@ -233,10 +210,8 @@ class MemoryStore(BaseModel):
                 "version": CURRENT_MEMORY_VERSION,
                 "user": data.get("user", data.get("profile", {})),
             }
-            if data.get("created_at"):
-                upgraded["created_at"] = data["created_at"]
-            if data.get("updated_at"):
-                upgraded["updated_at"] = data["updated_at"]
+            if data.get("created_at"): upgraded["created_at"] = data["created_at"]
+            if data.get("updated_at"): upgraded["updated_at"] = data["updated_at"]
             return upgraded
         if version < 2:
             upgraded = dict(data)
@@ -256,14 +231,11 @@ class MemoryStore(BaseModel):
 
     @model_validator(mode="after")
     def stamp_current_version(self) -> "MemoryStore":
-        """Ensure validated stores use the current schema version."""
         self.version = CURRENT_MEMORY_VERSION
         return self
 
 
 class MemorySearchResult(BaseModel):
-    """One searchable memory hit."""
-
     key: str
     value: str
     score: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -271,40 +243,27 @@ class MemorySearchResult(BaseModel):
 
 
 class MemoryManager:
-    """Extracts, validates, merges, saves, loads, and searches user memory."""
+    """Extracts, validates, merges, saves, loads, and searches user memory with Thread-Safety."""
 
     PET_BREEDS: Mapping[str, str] = {
-        "布偶": "猫",
-        "布偶猫": "猫",
-        "英短": "猫",
-        "美短": "猫",
-        "橘猫": "猫",
-        "狸花": "猫",
-        "金毛": "狗",
-        "柯基": "狗",
-        "柴犬": "狗",
-        "萨摩耶": "狗",
-        "泰迪": "狗",
+        "布偶": "猫", "布偶猫": "猫", "英短": "猫", "美短": "猫", "橘猫": "猫", "狸花": "猫",
+        "金毛": "狗", "柯基": "狗", "柴犬": "狗", "萨摩耶": "狗", "泰迪": "狗",
     }
 
-    INTEREST_HINTS: tuple[str, ...] = (
-        "喜欢",
-        "爱",
-        "迷上",
-        "感兴趣",
-        "最近在学",
-        "平时会",
-    )
+    INTEREST_HINTS: tuple[str, ...] = ("喜欢", "爱", "迷上", "感兴趣", "最近在学", "平时会")
 
     def __init__(self, memory_path: str | Path = "memory.json") -> None:
-        """Create a memory manager backed by a JSON file."""
+        """Create a memory manager backed by a JSON file with explicit thread lock."""
         self.memory_path = Path(memory_path)
+        self._lock = threading.Lock()  # 核心：引入线程锁，阻断并发写碎文件
         self.memory = self.load_memory()
 
     def extract_memory(self, text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> MemoryExtraction:
-        """Extract structured memory facts from text or chat messages."""
+        """Extract structured memory facts strictly from FEMALE user text."""
         text = self._coerce_user_text(text_or_messages)
         extraction = MemoryExtraction()
+        if not text:
+            return extraction
 
         extraction.name = self._extract_name(text)
         extraction.age = self._extract_age(text)
@@ -324,19 +283,22 @@ class MemoryManager:
         *,
         learn_profile: bool = True,
     ) -> MemoryStore:
-        """Extract and merge new facts, then save the updated memory document."""
+        """Extract, thread-safely merge, and atomically save the updated memory document."""
         profile_text = ""
         if learn_profile and (
             isinstance(text_or_memory, str) or not isinstance(text_or_memory, (MemoryExtraction, Mapping))
         ):
             profile_text = self._coerce_user_text(text_or_memory)
+            
         extraction = self._coerce_extraction(text_or_memory)
-        self._merge_extraction(extraction)
-        if profile_text:
-            self._update_profile_from_text(profile_text)
-        self.memory.updated_at = datetime.now(timezone.utc)
-        self.save_memory(self.memory)
-        return self.memory
+
+        with self._lock:  # 锁保护核心内存状态更新
+            self._merge_extraction(extraction)
+            if profile_text:
+                self._update_profile_from_text(profile_text)
+            self.memory.updated_at = datetime.now(timezone.utc)
+            self.save_memory(self.memory)
+            return self.memory
 
     def update_profile(
         self,
@@ -345,41 +307,52 @@ class MemoryManager:
         analysis: Mapping[str, Any] | None = None,
         relationship_state: Mapping[str, Any] | None = None,
     ) -> FemaleProfile:
-        """Update and persist the per-person interaction profile."""
+        """Update and safely persist the per-person interaction profile."""
         text = self._coerce_user_text(text_or_messages)
-        self._update_profile_from_text(text, analysis=analysis, relationship_state=relationship_state)
-        self.memory.updated_at = datetime.now(timezone.utc)
-        self.save_memory(self.memory)
-        return self.memory.user.profile
+        with self._lock:
+            self._update_profile_from_text(text, analysis=analysis, relationship_state=relationship_state)
+            self.memory.updated_at = datetime.now(timezone.utc)
+            self.save_memory(self.memory)
+            return self.memory.user.profile
 
     def load_memory(self) -> MemoryStore:
-        """Load memory from disk, creating a new validated store when missing."""
-        if not self.memory_path.exists():
-            memory = MemoryStore()
-            self.save_memory(memory)
-            return memory
+        """Load memory from disk with a thread-safe read lock."""
+        with self._lock:
+            if not self.memory_path.exists():
+                memory = MemoryStore()
+                self._save_memory_atomic(memory)
+                return memory
 
-        try:
-            raw = json.loads(self.memory_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            memory = MemoryStore()
-            self.save_memory(memory)
-            return memory
-
-        memory = MemoryStore.model_validate(raw)
-        if memory.version != CURRENT_MEMORY_VERSION:
-            memory.version = CURRENT_MEMORY_VERSION
-            self.save_memory(memory)
-        return memory
+            try:
+                raw = json.loads(self.memory_path.read_text(encoding="utf-8"))
+                return MemoryStore.model_validate(raw)
+            except (OSError, json.JSONDecodeError, ValueError):
+                # 盘写碎了或者格式不对，原地自愈，重置为空
+                memory = MemoryStore()
+                self._save_memory_atomic(memory)
+                return memory
 
     def save_memory(self, memory: MemoryStore | None = None) -> None:
-        """Persist the current memory document as validated JSON."""
+        """Expose standard save with safe atomic file replacement under lock."""
         resolved = memory or self.memory
+        if self._lock.locked():
+            self._save_memory_atomic(resolved)
+        else:
+            with self._lock:
+                self._save_memory_atomic(resolved)
+
+    def _save_memory_atomic(self, memory: MemoryStore) -> None:
+        """Atomic write protocol using a temporary file to avoid filesystem corruption."""
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-        self.memory_path.write_text(
-            resolved.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
+        temp_path = self.memory_path.with_suffix(".tmp")
+        try:
+            temp_path.write_text(memory.model_dump_json(indent=2), encoding="utf-8")
+            # 通过系统级原子重命名覆盖旧文件，彻底杜绝写碎文件的可能
+            os.replace(temp_path, self.memory_path)
+        except OSError:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise
 
     def search_memory(self, query: str) -> list[MemorySearchResult]:
         """Search memory values by key, value, or evidence text."""
@@ -388,17 +361,58 @@ class MemoryManager:
             return []
 
         results: list[MemorySearchResult] = []
-        for key, value, evidence in self._iter_memory_values():
-            haystack = f"{key} {value} {evidence}".lower()
-            if query_text in haystack:
-                results.append(MemorySearchResult(key=key, value=value, score=1.0, evidence=evidence))
+        with self._lock:
+            for key, value, evidence in self._iter_memory_values():
+                haystack = f"{key} {value} {evidence}".lower()
+                if query_text in haystack:
+                    results.append(MemorySearchResult(key=key, value=value, score=1.0, evidence=evidence))
         return results
 
-    def _coerce_extraction(
-        self,
-        text_or_memory: str | Sequence[str | Mapping[str, Any]] | MemoryExtraction | Mapping[str, Any],
-    ) -> MemoryExtraction:
-        """Convert supported update inputs into ``MemoryExtraction``."""
+    def _iter_memory_values(self) -> Sequence[tuple[str, str, str]]:
+        """Fixes the missing iterator error by yielding (field_name, value, evidence)."""
+        user = self.memory.user
+        items: list[tuple[str, str, str]] = []
+        
+        # 标量字段
+        for field in ("name", "age", "occupation", "city", "birthday"):
+            fact: MemoryFact | None = getattr(user, field, None)
+            if fact and fact.value:
+                items.append((field, fact.value, fact.evidence))
+                
+        # 复杂结构与列表
+        for pet in user.pets:
+            items.append(("pet", pet.display, pet.evidence))
+        for item in user.interests:
+            items.append(("interest", item.value, item.evidence))
+        for item in user.dietary_habits:
+            items.append(("dietary_habit", item.value, item.evidence))
+        for item in user.travel_experiences:
+            items.append(("travel_experience", item.value, item.evidence))
+        for item in user.important_events:
+            items.append(("important_event", item.value, item.evidence))
+            
+        return items
+
+    def _coerce_user_text(self, text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> str:
+        """严格角色过滤：只保留来自女生(USER)的消息，防止男方的话自我污染记忆库。"""
+        if isinstance(text_or_messages, str):
+            return text_or_messages
+
+        parts: list[str] = []
+        for item in text_or_messages:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, Mapping):
+                # 核心过滤：只有当角色明确不是 ASSISTANT 时，才认定为输入源
+                role = str(item.get("role", "")).lower()
+                if role in ("assistant", "coaching", "system"):
+                    continue
+                content = item.get("content", item.get("text", item.get("message", "")))
+                if content:
+                    parts.append(str(content))
+        return "\n".join(parts)
+
+    def _coerce_extraction(self, text_or_memory: Any) -> MemoryExtraction:
         if isinstance(text_or_memory, MemoryExtraction):
             return text_or_memory
         if isinstance(text_or_memory, Mapping):
@@ -406,7 +420,6 @@ class MemoryManager:
         return self.extract_memory(text_or_memory)
 
     def _merge_extraction(self, extraction: MemoryExtraction) -> None:
-        """Merge extracted facts into the current memory with validation."""
         user = self.memory.user
         user.name = self._choose_fact(user.name, extraction.name)
         user.age = self._choose_fact(user.age, extraction.age)
@@ -427,7 +440,6 @@ class MemoryManager:
         analysis: Mapping[str, Any] | None = None,
         relationship_state: Mapping[str, Any] | None = None,
     ) -> None:
-        """Learn interaction preferences from recent chat text."""
         if not text.strip():
             return
 
@@ -435,43 +447,43 @@ class MemoryManager:
         lower = text.lower()
         signals: list[str] = []
 
-        if any(word in lower for word in ("哈哈", "笑死", "逗你", "开玩笑", "你猜", "笨", "坏", "哼")):
+        if any(w in lower for w in ("哈哈", "笑死", "逗你", "开玩笑", "你猜", "笨", "坏", "哼")):
             profile.playfulness = self._nudge_int(profile.playfulness, 12)
             profile.communication_style = "playful"
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "轻调侃")
             signals.append("调侃接受度高")
 
-        if any(word in lower for word in ("累", "难受", "委屈", "压力", "烦死", "想哭", "崩溃", "没人懂")):
+        if any(w in lower for w in ("累", "难受", "委屈", "压力", "烦死", "想哭", "崩溃", "没人懂")):
             profile.reassurance_need = self._nudge_int(profile.reassurance_need, 14)
             profile.sensitivity = self._nudge_int(profile.sensitivity, 8)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "先安抚再安排")
             signals.append("需要先被接住")
 
-        if any(word in lower for word in ("你安排", "你决定", "听你的", "都可以", "随便你", "看你", "你说了算", "你来定", "看你安排")):
+        if any(w in lower for w in ("你安排", "你决定", "听你的", "都可以", "随便你", "看你", "你说了算", "你来定")):
             profile.leadership_preference = self._nudge_int(profile.leadership_preference, 14)
             profile.progression_pace = self._nudge_float(profile.progression_pace, 0.06)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "清晰安排")
             signals.append("接受清晰带领")
 
-        if any(word in lower for word in ("见面", "见一下", "一起", "周末", "周六", "周日", "有空", "出来", "吃饭", "咖啡", "电影", "喝一杯", "找天")):
+        if any(w in lower for w in ("见面", "见一下", "一起", "周末", "有空", "出来", "吃饭", "咖啡")):
             profile.leadership_preference = self._nudge_int(profile.leadership_preference, 8)
             profile.progression_pace = self._nudge_float(profile.progression_pace, 0.08)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "具体邀约")
             signals.append("邀约窗口")
 
-        if any(word in lower for word in ("别这样", "太快", "有压力", "别闹", "保持距离", "不舒服", "先别聊", "太急", "慢一点", "有点过")):
+        if any(w in lower for w in ("别这样", "太快", "有压力", "别闹", "保持距离", "不舒服", "太急", "慢一点")):
             profile.boundary_sensitivity = self._nudge_int(profile.boundary_sensitivity, 16)
             profile.sensitivity = self._nudge_int(profile.sensitivity, 10)
             profile.progression_pace = self._nudge_float(profile.progression_pace, -0.12)
             profile.avoided_moves = self._append_unique(profile.avoided_moves, "快速推进")
             signals.append("边界敏感")
 
-        if any(word in lower for word in ("别的女生", "别的女人", "她是谁", "吃醋", "是不是喜欢", "聊得开心")):
+        if any(w in lower for w in ("别的女生", "别的女人", "她是谁", "吃醋", "是不是喜欢")):
             profile.reassurance_need = self._nudge_int(profile.reassurance_need, 10)
             profile.preferred_feedback = self._append_unique(profile.preferred_feedback, "稳定确定感")
             signals.append("需要确定感")
 
-        if any(word in lower for word in ("哦", "嗯", "随便", "晚点说", "再说", "没空", "不想说")):
+        if any(w in lower for w in ("哦", "嗯", "随便", "晚点说", "再说", "没空", "不想说")):
             profile.sensitivity = self._nudge_int(profile.sensitivity, 8)
             profile.progression_pace = self._nudge_float(profile.progression_pace, -0.05)
             profile.avoided_moves = self._append_unique(profile.avoided_moves, "连续追问")
@@ -495,7 +507,6 @@ class MemoryManager:
 
     @staticmethod
     def _profile_label(profile: FemaleProfile) -> str:
-        """Return a readable profile label from current score bands."""
         if profile.boundary_sensitivity >= 70 or profile.progression_pace <= 0.82:
             return "慢热边界型"
         if profile.reassurance_need >= 70:
@@ -508,89 +519,69 @@ class MemoryManager:
 
     @staticmethod
     def _append_unique(values: list[str], value: str, *, limit: int = 8) -> list[str]:
-        """Append a value once while preserving recent preference order."""
         result = [item for item in values if item != value]
         result.insert(0, value)
         return result[:limit]
 
     @staticmethod
     def _nudge_int(value: int, delta: int) -> int:
-        """Move an integer score while keeping it inside 0-100."""
         return max(0, min(100, int(value) + delta))
 
     @staticmethod
     def _nudge_float(value: float, delta: float) -> float:
-        """Move progression pace while keeping it inside the model bounds."""
         return max(0.6, min(1.4, float(value) + delta))
 
     @staticmethod
     def _choose_fact(current: MemoryFact | None, incoming: MemoryFact | None) -> MemoryFact | None:
-        """Choose the better scalar fact during automatic merging."""
-        if incoming is None or not incoming.value:
-            return current
-        if current is None or not current.value:
-            return incoming
+        if incoming is None or not incoming.value: return current
+        if current is None or not current.value: return incoming
         if incoming.confidence >= current.confidence or incoming.value != current.value:
             return incoming
         return current
 
     def _merge_fact_list(self, current: list[MemoryFact], incoming: list[MemoryFact]) -> list[MemoryFact]:
-        """Merge fact lists by normalized value."""
-        merged: dict[str, MemoryFact] = {self._norm(fact.value): fact for fact in current if fact.value}
+        merged: dict[str, MemoryFact] = {self._norm(f.value): f for f in current if f.value}
         for fact in incoming:
             key = self._norm(fact.value)
-            if not key:
-                continue
+            if not key: continue
             existing = merged.get(key)
             merged[key] = self._choose_fact(existing, fact) or fact
         return list(merged.values())
 
     def _merge_pets(self, current: list[PetMemory], incoming: list[PetMemory]) -> list[PetMemory]:
-        """Merge pet memories while preserving breed/species learned earlier."""
         merged = list(current)
         for pet in incoming:
             match = self._find_matching_pet(merged, pet)
             if match is None:
                 merged.append(pet)
                 continue
-            if pet.species and not match.species:
-                match.species = pet.species
-            if pet.breed and not match.breed:
-                match.breed = pet.breed
-            if pet.name and not match.name:
-                match.name = pet.name
-            if pet.evidence:
-                match.evidence = pet.evidence
+            if pet.species and not match.species: match.species = pet.species
+            if pet.breed and not match.breed: match.breed = pet.breed
+            if pet.name and not match.name: match.name = pet.name
+            if pet.evidence: match.evidence = pet.evidence
             match.confidence = max(match.confidence, pet.confidence)
             match.updated_at = datetime.now(timezone.utc)
         return merged
 
     @staticmethod
     def _find_matching_pet(current: list[PetMemory], incoming: PetMemory) -> PetMemory | None:
-        """Find an existing pet memory likely describing the same pet."""
         for pet in current:
-            if incoming.name and pet.name == incoming.name:
-                return pet
-            if incoming.breed and pet.breed == incoming.breed:
-                return pet
+            if incoming.name and pet.name == incoming.name: return pet
+            if incoming.breed and pet.breed == incoming.breed: return pet
             if incoming.species and pet.species == incoming.species and not incoming.breed and not incoming.name:
                 return pet
         return None
 
     def _extract_name(self, text: str) -> MemoryFact | None:
-        """Extract user's name from explicit self-introduction."""
         patterns = (r"我叫([\u4e00-\u9fa5A-Za-z]{1,12})", r"我的名字叫([\u4e00-\u9fa5A-Za-z]{1,12})")
         return self._first_match_fact(text, patterns, confidence=0.9)
 
     def _extract_age(self, text: str) -> MemoryFact | None:
-        """Extract age from explicit age statements."""
         match = re.search(r"我(?:今年)?(\d{1,3})岁", text)
-        if not match:
-            return None
+        if not match: return None
         return MemoryFact(value=match.group(1), confidence=0.9, evidence=text)
 
     def _extract_occupation(self, text: str) -> MemoryFact | None:
-        """Extract occupation from common self-description patterns."""
         patterns = (
             r"我是(?:一名|一个)?([\u4e00-\u9fa5A-Za-z]{2,20})(?:，|。|,|\.|$)",
             r"我在做([\u4e00-\u9fa5A-Za-z]{2,20})(?:，|。|,|\.|$)",
@@ -599,7 +590,6 @@ class MemoryManager:
         return self._first_match_fact(text, patterns, confidence=0.75)
 
     def _extract_city(self, text: str) -> MemoryFact | None:
-        """Extract city from residence statements."""
         patterns = (
             r"我住在([\u4e00-\u9fa5A-Za-z]{2,20})",
             r"我在([\u4e00-\u9fa5A-Za-z]{2,20})(?:生活|工作|上班)",
@@ -608,19 +598,17 @@ class MemoryManager:
         return self._first_match_fact(text, patterns, confidence=0.8)
 
     def _extract_pets(self, text: str) -> list[PetMemory]:
-        """Extract pet memories including cat/dog species and known breeds."""
         pets: list[PetMemory] = []
         matched_breeds: list[str] = []
         for breed, species in sorted(self.PET_BREEDS.items(), key=lambda item: len(item[0]), reverse=True):
-            if any(breed in matched or matched in breed for matched in matched_breeds):
-                continue
+            if any(breed in m or m in breed for m in matched_breeds): continue
             if breed in text:
                 matched_breeds.append(breed)
                 pets.append(PetMemory(species=species, breed=breed, confidence=0.9, evidence=text))
 
-        if any(keyword in text for keyword in ("我家猫", "猫今天", "猫又", "猫猫", "主子")):
+        if any(k in text for k in ("我家猫", "猫今天", "猫又", "猫猫", "主子")):
             pets.append(PetMemory(species="猫", confidence=0.75, evidence=text))
-        if any(keyword in text for keyword in ("我家狗", "狗今天", "狗又", "狗狗")):
+        if any(k in text for k in ("我家狗", "狗今天", "狗又", "狗狗")):
             pets.append(PetMemory(species="狗", confidence=0.75, evidence=text))
 
         name_match = re.search(r"我家(?:猫|狗|宠物)(?:叫|名字叫)([\u4e00-\u9fa5A-Za-z]{1,12})", text)
@@ -630,18 +618,15 @@ class MemoryManager:
         return self._merge_pets([], pets)
 
     def _extract_interests(self, text: str) -> list[MemoryFact]:
-        """Extract interests from like/love/learning statements."""
         interests: list[MemoryFact] = []
         for hint in self.INTEREST_HINTS:
             pattern = rf"{hint}([\u4e00-\u9fa5A-Za-z0-9、，, ]{{1,30}})"
             for match in re.finditer(pattern, text):
                 value = self._clean_phrase(match.group(1))
-                if value:
-                    interests.append(MemoryFact(value=value, confidence=0.7, evidence=text))
+                if value: interests.append(MemoryFact(value=value, confidence=0.7, evidence=text))
         return self._dedupe_facts(interests)
 
     def _extract_birthday(self, text: str) -> MemoryFact | None:
-        """Extract birthday from date-like birthday statements."""
         patterns = (
             r"我生日(?:是|在)?(\d{1,2}月\d{1,2}[日号]?)",
             r"我的生日(?:是|在)?(\d{1,2}月\d{1,2}[日号]?)",
@@ -650,16 +635,13 @@ class MemoryManager:
         return self._first_match_fact(text, patterns, confidence=0.9)
 
     def _extract_dietary_habits(self, text: str) -> list[MemoryFact]:
-        """Extract dietary habits and preferences."""
         habits: list[MemoryFact] = []
         keywords = ("不吃辣", "爱吃辣", "喜欢甜食", "不吃香菜", "素食", "减脂餐", "咖啡", "奶茶", "海鲜过敏")
         for keyword in keywords:
-            if keyword in text:
-                habits.append(MemoryFact(value=keyword, confidence=0.85, evidence=text))
+            if keyword in text: habits.append(MemoryFact(value=keyword, confidence=0.85, evidence=text))
         return habits
 
     def _extract_travel_experiences(self, text: str) -> list[MemoryFact]:
-        """Extract travel experiences from visited/traveled statements."""
         experiences: list[MemoryFact] = []
         patterns = (
             r"去过([\u4e00-\u9fa5A-Za-z、，, ]{2,40})",
@@ -669,12 +651,10 @@ class MemoryManager:
         for pattern in patterns:
             for match in re.finditer(pattern, text):
                 value = self._clean_phrase(match.group(1))
-                if value:
-                    experiences.append(MemoryFact(value=value, confidence=0.75, evidence=text))
+                if value: experiences.append(MemoryFact(value=value, confidence=0.75, evidence=text))
         return self._dedupe_facts(experiences)
 
     def _extract_important_events(self, text: str) -> list[MemoryFact]:
-        """Extract important personal events."""
         events: list[MemoryFact] = []
         event_keywords = ("毕业", "入职", "离职", "搬家", "分手", "恋爱", "升职", "考试", "面试", "结婚")
         for keyword in event_keywords:
@@ -683,29 +663,23 @@ class MemoryManager:
         return self._dedupe_facts(events)
 
     def _first_match_fact(self, text: str, patterns: Sequence[str], *, confidence: float) -> MemoryFact | None:
-        """Return the first regex capture as a memory fact."""
         for pattern in patterns:
             match = re.search(pattern, text)
-            if match:
-                return MemoryFact(value=self._clean_phrase(match.group(1)), confidence=confidence, evidence=text)
+            if match: return MemoryFact(value=self._clean_phrase(match.group(1)), confidence=confidence, evidence=text)
         return None
 
     @staticmethod
     def _clean_phrase(value: str) -> str:
-        """Trim punctuation and filler from an extracted phrase."""
         return value.strip(" ，,。.!！?？;；：:、\n\t")
 
     @staticmethod
     def _sentence_around(text: str, keyword: str) -> str:
-        """Return a compact sentence containing an important event keyword."""
         for sentence in re.split(r"[。！？!?；;\n]", text):
-            if keyword in sentence:
-                return sentence.strip()
+            if keyword in sentence: return sentence.strip()
         return keyword
 
     @staticmethod
     def _dedupe_facts(facts: list[MemoryFact]) -> list[MemoryFact]:
-        """Remove duplicate fact values while preserving order."""
         seen: set[str] = set()
         result: list[MemoryFact] = []
         for fact in facts:
@@ -716,67 +690,25 @@ class MemoryManager:
         return result
 
     @staticmethod
-    def _coerce_text(text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> str:
-        """Convert raw text or message records into a single text block."""
-        if isinstance(text_or_messages, str):
-            return text_or_messages
-        parts: list[str] = []
-        for item in text_or_messages:
-            if isinstance(item, str):
-                parts.append(item)
-            else:
-                parts.append(str(item.get("content", item.get("text", item.get("message", "")))))
-        return "\n".join(part for part in parts if part)
-
-    @staticmethod
-    def _coerce_user_text(text_or_messages: str | Sequence[str | Mapping[str, Any]]) -> str:
-        """Convert only the other person's messages into a single text block."""
-        if isinstance(text_or_messages, str):
-            return text_or_messages
-        parts: list[str] = []
-        for item in text_or_messages:
-            if isinstance(item, str):
-                parts.append(item)
-                continue
-            role = str(item.get("role", "user")).lower()
-            if role in {"assistant", "me", "boy", "我"}:
-                continue
-            parts.append(str(item.get("content", item.get("text", item.get("message", "")))))
-        return "\n".join(part for part in parts if part)
-
-    @staticmethod
     def _norm(value: str) -> str:
-        """Normalize a value for deduplication and search matching."""
-        return re.sub(r"\s+", "", value).lower()
-
-    def _iter_memory_values(self) -> list[tuple[str, str, str]]:
-        """Flatten memory into searchable key-value-evidence tuples."""
-        user = self.memory.user
-        rows: list[tuple[str, str, str]] = []
-        for key in ("name", "age", "occupation", "city", "birthday"):
-            fact = getattr(user, key)
-            if fact is not None and fact.value:
-                rows.append((key, fact.value, fact.evidence))
-        for index, pet in enumerate(user.pets):
-            value = pet.display or pet.species or pet.breed or pet.name
-            if value:
-                rows.append((f"pets[{index}]", value, pet.evidence))
-        for key in ("interests", "dietary_habits", "travel_experiences", "important_events"):
-            for index, fact in enumerate(getattr(user, key)):
-                if fact.value:
-                    rows.append((f"{key}[{index}]", fact.value, fact.evidence))
-        return rows
-
-
-def _demo() -> None:
-    """Run a small module smoke test."""
-    demo_path = Path("memory_demo.json")
-    manager = MemoryManager(memory_path=demo_path)
-    manager.update_memory("我养了一只布偶猫")
-    manager.update_memory("我家猫今天又拆家了")
-    print(manager.memory.user.summary())
-    demo_path.unlink(missing_ok=True)
+        """Normalize string for key comparison."""
+        return str(value).strip().lower()
 
 
 if __name__ == "__main__":
-    _demo()
+    # 联调验证
+    manager = MemoryManager("test_memory.json")
+    
+    # 测试消息流（包含非 USER 角色，应自动被隔离过滤）
+    chat_history = [
+        {"role": "user", "content": "我在武汉上班，我养了一只布偶猫。"},
+        {"role": "assistant", "content": "哇，布偶猫很可爱！我住在北京，今年30岁。"}, # 应被拦截，不污染库
+    ]
+    
+    manager.update_memory(chat_history)
+    print("搜索城市 ->:", manager.search_memory("武汉"))
+    print("当前宠物画像 ->:", manager.memory.user.summary()["pets"])
+    
+    # 清理测试文件
+    if manager.memory_path.exists():
+        manager.memory_path.unlink()

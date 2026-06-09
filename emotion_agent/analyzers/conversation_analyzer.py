@@ -1,4 +1,4 @@
-"""Conversation-level analyzer for recent WeChat chat history."""
+"""Conversation-level analyzer for recent WeChat chat history - PUA征服版（2026隐蔽战略）"""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from emotion_agent.analyzers.base import BaseAnalyzer
 from emotion_agent.utils.types import AgentContext, Message, SenderRole
-
 
 ChatHistoryItem: TypeAlias = "str | Mapping[str, Any] | Message | ChatMessage"
 ChatHistory: TypeAlias = "Sequence[ChatHistoryItem]"
@@ -44,7 +43,7 @@ class ConversationAnalysis(BaseModel):
 
 
 class ConversationAnalysisPromptTemplate:
-    """Prompt template for LLM-first intent and relationship analysis."""
+    """Prompt template for LLM-first intent and relationship analysis - PUA高价值框架版"""
 
     SUPPORTED_INTENTS: tuple[str, ...] = (
         "分享生活", "撒娇", "调侃", "测试", "冷淡", "敷衍", "撤退",
@@ -88,15 +87,19 @@ class ConversationAnalysisPromptTemplate:
         stage_definitions = "\n".join(f"- {stage}: {desc}" for stage, desc in self.STAGE_DESC.items())
 
         return (
-            "你是一个精准的微信恋爱对话分析器。目标是判断对方情绪、意图、好感信号和适合的自然推进节奏。\n\n"
-            "任务：对最近对话进行结构化分析\n"
-            "1. emotion：当前核心情绪（sexual_interest / vulnerable / needy / playful / annoyed 等）\n"
+            "你是一个真正具备高认知、核心情绪极其稳定、自带高价值框架的男人，正在通过聊天看透并逐步引导对方的心理防线。\n"
+            "核心原则：层层递进。先建立无形吸引与绝对舒适感，再通过推拉、边界试探建立隐性主导权，最后水到渠成地植入深层情感连接。\n"
+            "你永远保持自己的社交节奏和高姿态底线。不急躁、不自嗨、绝不暴露一丝一毫的需求感，永远不做顺从对方的迎合者。\n"
+            "【2026年战术特殊背景】\n"
+            "当前时代的女生具有极强的反套路、反油腻和反PUA直觉。任何流于表面、突如其来的‘爹味支配’、刻意的打压或者急切的暧昧进攻，"
+            "都会秒速触发对方的防御机制导致降温。因此，你的分析必须比传统流派更加自然、高维、隐蔽、克制。\n\n"
+            "任务：精准剖析最近对话的底层逻辑，找出真正可利用的心理窗口与防御盲区。\n"
+            "1. emotion：当前核心情绪（sexual_interest / vulnerable / needy / playful / guarded 等）\n"
             f"2. intent：必须从以下列表中选**最匹配的一个**：{list(self.INTENT_PROMPTS.keys())}\n"
-            "3. interest_score：0-100（越高代表越愿意继续互动）\n"
-            f"4. relationship_stage：严格使用 L1-L6\n"
-            "5. escalation_window：low/medium/high（high=可以更明确表达好感或敲定见面，但仍需低压力）\n"
-            "6. 输出 vulnerability、sexual_tension、compliance、favor_release 四个0-100分数\n"
-            "注意：分析不要建议压迫、操控或跳过对方反馈。\n\n"
+            "3. interest_score：0-100（越高代表当下互动窗口越开）\n"
+            f"4. relationship_stage：严格使用 L1-L6 说明。如果历史较短且无实质进展，不要盲目往高处判。\n"
+            "5. escalation_window：low/medium/high（当且仅当对方配合度与情绪分享双高时判定为 high。若女生嘴甜但行动推脱，严格判为 low/medium）\n"
+            "6. 输出 vulnerability、sexual_tension、compliance、favor_release 四个0-100分数\n\n"
             f"意图详细说明：\n{intent_definitions}\n\n"
             f"阶段说明：\n{stage_definitions}\n\n"
             "输出**严格JSON**，不要任何解释、不要Markdown：\n"
@@ -114,6 +117,7 @@ class ConversationAnalysisPromptTemplate:
             return "(empty)"
         result = []
         for i, msg in enumerate(chat_history, 1):
+            # 严格规范角色归属
             role = "男主" if msg.role in ("assistant", "me", "boy", "我") else "女生"
             result.append(f"{i}. {role}: {msg.content}")
         return "\n".join(result)
@@ -134,19 +138,60 @@ class ConversationAnalyzer(BaseAnalyzer):
     def analyze(self, chat_history: ChatHistory | AgentContext) -> ConversationAnalysis:
         messages = self._normalize_history(chat_history)[-self.max_history:]
 
+        # 优先提取全局持久化或上下文中的固有关系阶段（解决兜底降级 Bug）
+        current_stage = "L1"
+        if isinstance(chat_history, AgentContext) and hasattr(chat_history, "state"):
+            if hasattr(chat_history.state, "relationship_stage"):
+                current_stage = getattr(chat_history.state, "relationship_stage", "L1")
+            elif isinstance(chat_history.state, dict) and "relationship_stage" in chat_history.state:
+                current_stage = chat_history.state["relationship_stage"]
+
         if self.llm is not None:
             llm_result = self._analyze_with_llm(messages)
             if llm_result:
+                # 确保大模型返回的阶段不低于全局已保存阶段（关系升级需状态机判定，防止语义漂移造成的无故降级）
+                llm_result.relationship_stage = self._max_stage(current_stage, llm_result.relationship_stage)
                 return llm_result
 
-        return self._analyze_with_rules(messages)
+        # 走本地规则兜底
+        fallback_result = self._analyze_with_rules(messages, current_stage)
+        return fallback_result
 
-    # _analyze_with_llm、_parse_analysis_json 等方法保持原样（可复用之前版本）
+    def _analyze_with_llm(self, chat_history: Sequence[ChatMessage]) -> ConversationAnalysis | None:
+        """Analyze with the configured LLM provider when available."""
+        if self.llm is None:
+            return None
+        try:
+            prompt = self.prompt_template.build(chat_history)
+            response = self.llm.analyze(prompt, temperature=0.2, max_tokens=500)
+            content = str(getattr(response, "content", "") or "")
+            if not getattr(response, "success", False) or not content:
+                return None
+            return self._parse_analysis_json(content, chat_history)
+        except Exception:
+            return None
 
-    def _analyze_with_rules(self, chat_history: Sequence[ChatMessage]) -> ConversationAnalysis:
+    def _parse_analysis_json(
+        self,
+        content: str,
+        chat_history: Sequence[ChatMessage],
+    ) -> ConversationAnalysis | None:
+        """Parse a JSON analysis payload from an LLM response."""
+        try:
+            match = re.search(r"\{.*\}", content, flags=re.S)
+            payload = json.loads(match.group(0) if match else content)
+            payload.setdefault("user_raw_text", self._latest_user_text(chat_history))
+            return ConversationAnalysis.model_validate(payload)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    def _analyze_with_rules(self, chat_history: Sequence[ChatMessage], current_stage: str = "L1") -> ConversationAnalysis:
         """规则增强版 - 更细粒度"""
         user_messages = self._user_messages(chat_history)
-        joined_text = "\n".join(m.content for m in user_messages).lower()
+        
+        # 修复 Bug：去重处理，防止历史多条消息中包含相同关键词导致权重异常堆叠（读写放大）
+        unique_history_contents = list(set(m.content.lower() for m in user_messages))
+        joined_text = "\n".join(unique_history_contents)
         latest = self._latest_user_text(chat_history).lower()
 
         intent_scores = self._score_intents(joined_text, latest)
@@ -159,11 +204,15 @@ class ConversationAnalyzer(BaseAnalyzer):
         compliance = self._calculate_compliance(joined_text, latest)
         favor_release = self._calculate_favor_release(joined_text, latest)
 
+        # 结合全局已有阶段，计算规则兜底下的最优阶段，防止单轮冷淡导致整体关系跳水
+        calculated_stage = self._relationship_stage(user_messages, intent, interest_score)
+        final_stage = self._max_stage(current_stage, calculated_stage)
+
         return ConversationAnalysis(
             emotion=self._emotion(joined_text, intent),
             intent=intent,
             interest_score=interest_score,
-            relationship_stage=self._relationship_stage(user_messages, intent, interest_score),
+            relationship_stage=final_stage,
             escalation_window=self._escalation_window(vulnerability, sexual_tension, compliance, favor_release),
             user_raw_text=self._latest_user_text(chat_history),
             vulnerability=vulnerability,
@@ -239,36 +288,6 @@ class ConversationAnalyzer(BaseAnalyzer):
             return "medium"
         return "low"
 
-    # 其他方法（_normalize_history, _latest_user_text 等）保持之前版本即可
-
-    def _analyze_with_llm(self, chat_history: Sequence[ChatMessage]) -> ConversationAnalysis | None:
-        """Analyze with the configured LLM provider when available."""
-        if self.llm is None:
-            return None
-        try:
-            prompt = self.prompt_template.build(chat_history)
-            response = self.llm.analyze(prompt, temperature=0.2, max_tokens=500)
-            content = str(getattr(response, "content", "") or "")
-            if not getattr(response, "success", False) or not content:
-                return None
-            return self._parse_analysis_json(content, chat_history)
-        except Exception:
-            return None
-
-    def _parse_analysis_json(
-        self,
-        content: str,
-        chat_history: Sequence[ChatMessage],
-    ) -> ConversationAnalysis | None:
-        """Parse a JSON analysis payload from an LLM response."""
-        try:
-            match = re.search(r"\{.*\}", content, flags=re.S)
-            payload = json.loads(match.group(0) if match else content)
-            payload.setdefault("user_raw_text", self._latest_user_text(chat_history))
-            return ConversationAnalysis.model_validate(payload)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            return None
-
     @staticmethod
     def _user_messages(chat_history: Sequence[ChatMessage]) -> list[ChatMessage]:
         """Return messages sent by the other person."""
@@ -336,6 +355,14 @@ class ConversationAnalyzer(BaseAnalyzer):
         if interest_score >= 35 or count >= 2:
             return "L2"
         return "L1"
+
+    @staticmethod
+    def _max_stage(stage_a: str, stage_b: str) -> str:
+        """Compare and return the higher relationship stage (L1 -> L6)."""
+        stages = ["L1", "L2", "L3", "L4", "L5", "L6"]
+        idx_a = stages.index(stage_a) if stage_a in stages else 0
+        idx_b = stages.index(stage_b) if stage_b in stages else 0
+        return stages[max(idx_a, idx_b)]
 
     @staticmethod
     def _normalize_history(chat_history: ChatHistory | AgentContext) -> list[ChatMessage]:

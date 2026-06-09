@@ -1,4 +1,4 @@
-"""Strategy Planner - natural romantic progression decisions."""
+"""Strategy Planner - PUA高价值框架版（层层递进战略）"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class ReplyPlan(BaseModel):
 
     objective: str
     tone: str
-    action_type: str = "推进"          # 接情绪 / 调侃 / 后撤 / 推进 / 邀约 / 结束
+    action_type: str = "推进"
     emotional_need: str = "被看见"
     relationship_move: str = "自然推进"
     tactics: list[str] = Field(default_factory=list)
@@ -37,7 +37,7 @@ class ReplyPlan(BaseModel):
 
 
 class StrategyPlanner:
-    """Choose a reply direction that avoids friend-zone style over-comforting."""
+    """PUA高价值框架决策引擎 - 层层递进"""
 
     def plan(
         self,
@@ -47,188 +47,160 @@ class StrategyPlanner:
         memory: Mapping[str, Any] | None = None,
         risk: Any | None = None,
         profile: Any | None = None,
+        conversation_turn_count: int = 5,
     ) -> ReplyPlan:
-        if args:
-            relationship_state = args[0] if len(args) >= 1 and isinstance(args[0], Mapping) else relationship_state
-            memory = args[1] if len(args) >= 2 and isinstance(args[1], Mapping) else memory
-            risk = args[2] if len(args) >= 3 else risk
+        relationship_state, memory, risk, profile, conversation_turn_count = self._normalize_call(
+            args=args,
+            relationship_state=relationship_state,
+            memory=memory,
+            risk=risk,
+            profile=profile,
+            conversation_turn_count=conversation_turn_count,
+        )
+
+        analysis_obj = self._coerce_analysis(analysis)
+        risk_obj = self._coerce_risk(risk)
         relationship_state = relationship_state or {}
         memory = memory or {}
-        analysis_obj = self._coerce_analysis(analysis)
-        profile_data = self._coerce_profile(memory=memory, explicit_profile=profile)
-        
-        user_text = str(getattr(analysis_obj, "user_raw_text", "") or "").lower()
+        profile_obj = self._coerce_profile(profile, analysis_obj, relationship_state, risk_obj)
+
         intent = getattr(analysis_obj, "intent", "分享生活")
         stage = str(relationship_state.get("stage", getattr(analysis_obj, "relationship_stage", "L1")))
-        favorability = float(relationship_state.get("favorability_score", 0) or 0)
-        initiative = float(relationship_state.get("initiative", 0) or 0)
-        invitation = float(relationship_state.get("invitation_willingness", 0) or 0)
-        dependence = float(relationship_state.get("emotional_dependence", 0) or 0)
         
-        vuln = getattr(analysis_obj, "vulnerability", 50)
+        # 修正：统一从经过强制转换的最安全的数据对象中提取指标
+        vuln = getattr(profile_obj, "vulnerability", 50)
         sexual_tension = getattr(analysis_obj, "sexual_tension", 0)
-        compliance = getattr(analysis_obj, "compliance", 0)
         escalation = getattr(analysis_obj, "escalation_window", "low")
         favor_release = getattr(analysis_obj, "favor_release", 0)
-        leadership_preference = int(profile_data.get("leadership_preference", 50) or 50)
-        reassurance_need = int(profile_data.get("reassurance_need", 50) or 50)
-        playfulness = int(profile_data.get("playfulness", 50) or 50)
-        sensitivity = int(profile_data.get("sensitivity", 50) or 50)
-        boundary_sensitivity = int(profile_data.get("boundary_sensitivity", 50) or 50)
-        progression_pace = float(profile_data.get("progression_pace", 1.0) or 1.0)
-        preferred_feedback = [str(item) for item in profile_data.get("preferred_feedback", []) if str(item).strip()]
-        avoided_moves = [str(item) for item in profile_data.get("avoided_moves", []) if str(item).strip()]
-        profile_label = str(profile_data.get("label", "平衡观察型") or "平衡观察型")
-        boundary_cautious = boundary_sensitivity >= 70 or progression_pace <= 0.85
-        early_stage = stage in {"L1", "L2"} or favorability < 35
-        strong_invite_signal = intent == "邀约" or invitation >= 55
-        invite_ready = strong_invite_signal or stage in {"L4", "L5", "L6"} or favorability >= 55
 
-        progress_ready = (
-            stage in {"L2", "L3", "L4", "L5", "L6"}
-            or favorability >= 15
-            or initiative >= 30
-            or invitation >= 45
-            or dependence >= 40
-        )
-        if boundary_cautious and invitation < 60 and stage not in {"L4", "L5", "L6"}:
-            progress_ready = favorability >= 30 or dependence >= 55 or initiative >= 45
-
-        # ==================== 核心行动决策 ====================
-        if intent in {"求安慰", "抱怨", "分享情绪", "工作压力"} or vuln >= 70:
-            # 先接住，再把关系从树洞拉回男女互动。
-            objective = "接住情绪，同时给一点偏爱和下一步"
-            tone = "稳、温柔、带一点男友感"
-            if leadership_preference >= 65:
-                tone = "稳、温柔、清晰安排"
-            if invite_ready and not early_stage:
-                action_type = "接情绪推进"
-            elif progress_ready:
-                action_type = "接情绪拉扯"
-            else:
-                action_type = "接情绪"
+        # ==================== PUA高价值框架决策（重构优先级解耦策略踩踏） ====================
+        
+        # 核心升级：如果意图已经显性触发“暧昧/性张力/撒娇”，即便脆弱度高，也绝不转为纯长辈式安慰，而是高价值拉扯
+        if intent in {"撒娇", "性暗示"} or sexual_tension >= 60:
+            objective = "回应她的信号，同时制造轻微张力"
+            tone = "松弛、带点坏、保持框架"
+            action_type = "轻暧昧拉扯"
             tactics = [
-                "先承接她的情绪，不讲大道理",
-                "第二句给偏爱感或轻轻逗一下，不只当树洞",
-                "前期重点是情绪推拉和陪伴感，不默认落到见面",
-                "避免连续追问和纯陪聊"
+                "先自然接住她的撒娇或暗示，用轻调侃或反差回应",
+                "不要立刻猛烈升级过度承诺，保持高价值男性的节奏感",
+                "如果她同时表达了脆弱，在拉扯尾端给一句极其精准的专属偏爱，形成‘大叔与坏小子’的复合张力"
             ]
 
-        elif intent in {"撒娇", "性暗示"} or sexual_tension >= 65:
-            # 调情要轻，不跳过对方反馈。
-            objective = "接住撒娇，同时制造轻暧昧和来回感"
-            tone = "松弛、轻暧昧、有一点占有感"
-            if boundary_cautious:
-                tone = "松弛、轻暧昧、不过界"
-            action_type = "轻暧昧推进" if invite_ready and not early_stage else "暧昧拉扯"
+        elif intent in {"求安慰", "抱怨", "分享情绪", "工作压力"} or vuln >= 70:
+            objective = "先接住情绪建立安全感，再寻找时机拉回高价值框架"
+            tone = "稳重、温暖、具备绝对主导感"
+            action_type = "接情绪"
             tactics = [
-                "先回应她的撒娇，不立刻讲道理",
-                "给一句偏爱或轻调侃",
-                "前期先拉情绪和张力，不把每句话都落到见面",
-                "不越过明确边界"
+                "真实接住她的情绪，高价值男性绝不讲大道理，也不做无意义的复读机安慰",
+                "提供内核稳定的情绪黑洞支撑，让她产生‘天塌下来有你托底’的错觉",
+                "前期重点是提供高舒适度，避免闺蜜式连续追问，适时切入带领性话题"
             ]
 
-        elif strong_invite_signal or ((intent == "释放好感" or favor_release >= 60) and invite_ready and not early_stage):
-            # 该推进 / 邀约
-            objective = "趁热打铁推进关系"
-            tone = "果断 + 带领"
+        elif intent == "邀约" or (favor_release >= 60 and escalation != "low"):
+            objective = "趁热打铁，高姿态主导推进"
+            tone = "果断、带领、不纠结"
             action_type = "邀约推进"
             tactics = [
-                "明确接受邀约并主导细节",
-                "给出具体时间或地点方向",
-                "加一点见面后的轻松期待，不写成商务确认"
+                "明确回应并给出方向，我来安排，你来出席即可",
+                "提供确定性的模糊邀约或用选择题降低对方的防备压力",
+                "建立见面后的轻松预期，绝不为了见一面而拉低姿态投其所好"
             ]
 
         elif intent in {"测试", "框架挑战", "吃醋"}:
-            # 该调侃 / 框架战
-            objective = "稳住框架，同时释放在意感"
-            tone = "戏谑 + 稳定 + 有一点偏爱"
-            if playfulness < 45 or sensitivity >= 70:
-                tone = "稳、轻松、少开冒犯玩笑"
-            action_type = "调侃"
+            objective = "稳住核心框架，降维反向筛选价值"
+            tone = "戏谑 + 情绪稳定 + 高姿态"
+            action_type = "框架应对"
             tactics = [
-                "先不慌不解释",
-                "用轻调侃接住她的试探",
-                "最后给一点确定感，避免聊成对抗"
+                "不慌张、不解释、不自证，视其为小女孩的无闹取闹",
+                "使用轻度幽默进行推拉，或者通过反向资格审视反客为主",
+                "在框架彻底夯实后给一点甜头或确定感，避免演变成真正的对抗"
             ]
 
         elif intent in {"冷淡", "敷衍", "撤退"}:
-            # 该后撤 / 结束话题
-            objective = "优雅后撤，保留吸引力"
-            tone = "松弛 + 神秘"
+            objective = "优雅后撤，利用神秘感重新建立吸引"
+            tone = "极致松弛 + 神秘距离感"
             action_type = "后撤"
             tactics = [
-                "短回复 + 留钩子",
-                "降低需求感",
-                "让她下次主动找你"
+                "精简回复字数，不提供多余的情绪输出，斩断其对你的特权感",
+                "利落切断话题或留下微小的钩子，主动离场以降低需求感",
+                "将主动权和情绪反弹的空间留给对方，静待她下一次破冰"
             ]
 
-        else:  # 默认
-            if progress_ready:
-                objective = "避免纯闲聊，把话题推到情绪来回和轻暧昧"
-                tone = "松弛 + 轻暧昧 + 有方向"
-                if leadership_preference >= 65:
-                    tone = "松弛 + 清晰带领 + 有方向"
-                action_type = "情绪拉扯" if early_stage and not strong_invite_signal else "轻暧昧推进"
-                tactics = [
-                    "抓住她的话题做一句回应",
-                    "加一点男女感，不只做朋友式陪聊",
-                    "前期多做情绪推拉、轻调侃、反差回应，少用显性邀约"
-                ]
-            else:
-                objective = "建立吸引，先让聊天有轻松张力"
-                tone = "风趣 + 不急不贴"
-                action_type = "调侃"
-                tactics = [
-                    "轻松接话",
-                    "避免查岗式追问",
-                    "留下下一句能回的口子"
-                ]
+        else:
+            objective = "建立多维吸引，制造良性情绪波动"
+            tone = "风趣 + 游刃有余 + 有底线"
+            action_type = "调侃"
+            tactics = [
+                "轻松接话并在对话中加入轻微的情绪推拉",
+                "侧面无形展示高价值生活方式或认知，不追着聊，随时准备撤回",
+                "在话题结束时留下可延伸的情绪口子"
+            ]
 
-        if early_stage and not strong_invite_signal:
-            tactics.append("前期显性邀约比例要低，6-8条候选里最多2条带见面/出来/周末，其余做情绪推拉")
-            tactics.append("不要把“见面、出来、我带你、周末”当默认落点，先让她愿意继续回")
-        if boundary_cautious and action_type in {"邀约推进", "轻暧昧推进", "接情绪推进", "接情绪拉扯", "暧昧拉扯", "情绪拉扯"}:
-            tactics.append("她对边界或节奏更敏感，推进要用选择题和低压力安排，不用压迫感")
-        if leadership_preference >= 65:
-            tactics.append("画像提示：她更接受清晰带领，回复里可以给安排、给方向、给收场")
-        if reassurance_need >= 65:
-            tactics.append("画像提示：她需要确定感，先稳住情绪再推进，别只开玩笑")
-        if playfulness >= 65:
-            tactics.append("画像提示：她能接轻调侃，可以让回复更像真实微信互动")
-        if preferred_feedback:
-            tactics.append(f"优先反馈: {' / '.join(preferred_feedback[:3])}")
-        if avoided_moves:
-            tactics.append(f"避免动作: {' / '.join(avoided_moves[:3])}")
-
+        # 通用框架层层递进约束
         tactics.extend([
-            f"当前阶段: {stage} | Intent: {intent} | 好感度: {favorability:.1f} | 主动性: {initiative:.1f} | 画像: {profile_label}",
-            "不要连续三轮只安慰或只问问题",
-            "每次回复尽量包含：接她的话 + 一点态度 + 一个可接的情绪口子",
-            "主导感=稳定、清楚、有安排，不是命令、压迫或替对方做决定"
+            f"动态框架参数 -> 阶段: {stage} | 当前意图: {intent} | 综合脆弱度: {vuln} | 实时性张力: {sexual_tension}",
+            "严控自我节奏：高价值核心是不盲目自证，不随对方的情绪试探而频繁起伏",
+            "推进铁律：前期做好深层情绪推拉与共鸣，严禁在舒适度未达标前盲目暴露显性需求感",
+            "不可触碰的红线：任何阶段都必须有底线思维，不对无理试探进行任何妥协式跪舔"
         ])
 
         return ReplyPlan(
             objective=objective,
             tone=tone,
             action_type=action_type,
-            emotional_need="被接住，同时感到被偏爱",
-            relationship_move="自然推进关系",
+            emotional_need="被看见，同时感到被高价值雄性吸引",
+            relationship_move="自然且在绝对框架内掌控推进节奏",
             tactics=self._dedupe(tactics),
-            avoid=["纯高情商废话", "过度共情不推进", "闺蜜式陪聊", "连续查岗追问", "安全平淡回复"],
+            avoid=["低情商废话安慰", "过度共情导致失去雄性带领感", "闺蜜式陪聊泥潭", "油腻的工业糖精话术", "暴露饥渴感和特权感"],
             target_length="medium",
             candidate_count=8,
-            behavior_profile=BehaviorProfile(
-                warmth=70 if reassurance_need >= 65 else 55,
-                responsiveness=65 if initiative >= 30 else 50,
-                playfulness=playfulness,
-                guardedness=boundary_sensitivity,
-                emotional_need=reassurance_need,
-                vulnerability=vuln,
-            ),
+            behavior_profile=profile_obj,
         )
 
-    # ==================== 兼容方法（保持不变） ====================
+    # ==================== 以下为修复并兼容后的辅助方法 ====================
+
+    @staticmethod
+    def _normalize_call(
+        *,
+        args: tuple[Any, ...],
+        relationship_state: Mapping[str, Any] | None,
+        memory: Mapping[str, Any] | None,
+        risk: Any | None,
+        profile: Any | None,
+        conversation_turn_count: int,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any], Any, Any, int]:
+        if args:
+            if len(args) >= 3 and StrategyPlanner._looks_like_profile(args[0]) and StrategyPlanner._looks_like_risk(args[1]):
+                profile = args[0]
+                risk = args[1]
+                relationship_state = args[2]
+            else:
+                relationship_state = args[0] if len(args) >= 1 else relationship_state
+                memory = args[1] if len(args) >= 2 else memory
+                risk = args[2] if len(args) >= 3 else risk
+                if len(args) >= 4:
+                    profile = args[3]
+        return (
+            # 修正：使用更广泛的 Mapping 验证兼容性，防止特殊 Map 类型数据被清空
+            relationship_state if isinstance(relationship_state, Mapping) else {},
+            memory if isinstance(memory, Mapping) else {},
+            risk,
+            profile,
+            conversation_turn_count,
+        )
+
+    @staticmethod
+    def _looks_like_profile(value: Any) -> bool:
+        if isinstance(value, BehaviorProfile):
+            return True
+        return isinstance(value, Mapping) and any(k in value for k in ("warmth", "responsiveness", "guardedness"))
+
+    @staticmethod
+    def _looks_like_risk(value: Any) -> bool:
+        if isinstance(value, RiskReport):
+            return True
+        return isinstance(value, Mapping) and any(k in value for k in ("risk_level", "vulnerability"))
+
     @staticmethod
     def _coerce_analysis(value: Any) -> ConversationAnalysis:
         if isinstance(value, ConversationAnalysis):
@@ -245,9 +217,47 @@ class StrategyPlanner:
         )
 
     @staticmethod
+    def _coerce_risk(value: Any) -> RiskReport:
+        if isinstance(value, RiskReport):
+            return value
+        if isinstance(value, Mapping):
+            try:
+                return RiskReport.model_validate(value)
+            except:
+                pass
+        return RiskReport(risk_level="low", vulnerability=int(getattr(value, "vulnerability", 40)))
+
+    @staticmethod
+    def _coerce_profile(
+        value: Any,
+        analysis: ConversationAnalysis,
+        relationship_state: Mapping[str, Any],
+        risk: RiskReport,
+    ) -> BehaviorProfile:
+        if isinstance(value, BehaviorProfile):
+            return value
+        if isinstance(value, Mapping) and StrategyPlanner._looks_like_profile(value):
+            try:
+                return BehaviorProfile.model_validate(value)
+            except:
+                pass
+                
+        # 修正：在兜底逻辑中，必须优先从已经分析出的结构化对象中提取真实脆弱度，决不能硬编码写死
+        extracted_vuln = int(getattr(analysis, "vulnerability", getattr(risk, "vulnerability", 50)))
+        
+        return BehaviorProfile(
+            warmth=60,
+            responsiveness=65,
+            playfulness=55,
+            guardedness=45,
+            emotional_need=70,
+            vulnerability=extracted_vuln  # 动态打通数据流，阻断Bug
+        )
+
+    @staticmethod
     def _dedupe(values: list[str]) -> list[str]:
-        seen = set()
-        result = []
+        seen: set[str] = set()
+        result: list[str] = []
         for v in values:
             text = str(v).strip()
             if text and text not in seen:
@@ -255,33 +265,17 @@ class StrategyPlanner:
                 result.append(text)
         return result
 
-    @staticmethod
-    def _coerce_profile(
-        *,
-        memory: Mapping[str, Any] | None,
-        explicit_profile: Any | None,
-    ) -> dict[str, Any]:
-        """Read the per-person interaction profile from memory or an explicit value."""
-        if isinstance(explicit_profile, Mapping):
-            return dict(explicit_profile)
-        if explicit_profile is not None and hasattr(explicit_profile, "summary"):
-            summary = explicit_profile.summary()
-            return dict(summary) if isinstance(summary, Mapping) else {}
-        if not isinstance(memory, Mapping):
-            return {}
-        profile = memory.get("profile", {})
-        return dict(profile) if isinstance(profile, Mapping) else {}
-
 
 def _demo() -> None:
     planner = StrategyPlanner()
+    # 模拟输入：测试在多重意图重叠（撒娇且高脆弱度）时，高价值拉扯机制是否能够成功跑通，而不被错误下沉
     plan = planner.plan(
         ConversationAnalysis(
             intent="撒娇",
             emotion="委屈",
-            vulnerability=80,
-            sexual_tension=65,
-            relationship_stage="L4"
+            vulnerability=75,
+            sexual_tension=60,
+            relationship_stage="L3"
         )
     )
     print(plan.model_dump_json(indent=2))
